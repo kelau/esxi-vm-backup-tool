@@ -213,7 +213,20 @@ class BackupRepository:
             query += " WHERE vm_id=?"
             params = (vm_id,)
         rows = self.db.execute(query + " ORDER BY started_at DESC", params).fetchall()
-        return [BackupRecord.model_validate(dict(row)) for row in rows]
+        return [self._backup_record(row) for row in rows]
+
+    @staticmethod
+    def _backup_record(row) -> BackupRecord:
+        values = dict(row)
+        # Catalogs created by older versions can contain NULL in columns added
+        # later. Normalize defensively even if a migration was interrupted.
+        for field, default in {
+            "logical_bytes": 0, "stored_bytes": 0, "virtual_bytes": 0,
+            "throughput_mib_s": 0.0, "progress": 0, "phase": "queued",
+        }.items():
+            if values.get(field) is None:
+                values[field] = default
+        return BackupRecord.model_validate(values)
 
     def update_progress(
         self, backup_id: str, *, progress: int, phase: str,

@@ -53,6 +53,20 @@ def test_interrupted_backup_is_failed_when_repository_reopens(tmp_path):
     assert saved.error == "Backup interrupted by service restart"
 
 
+def test_legacy_null_metrics_are_normalized_on_read(tmp_path):
+    repository = BackupRepository(tmp_path)
+    values = BackupRecord(
+        id="legacy", vm_id="vm-1", vm_name="db", status=BackupStatus.SUCCESS,
+    ).model_dump(mode="json")
+    values.update(throughput_mib_s=None, virtual_bytes=None, phase=None)
+
+    saved = repository._backup_record(values)
+
+    assert saved.throughput_mib_s == 0
+    assert saved.virtual_bytes == 0
+    assert saved.phase == "queued"
+
+
 def test_corrupt_chunk_is_rejected(tmp_path):
     repository = BackupRepository(tmp_path, chunk_size=64)
     chunks, _, _ = repository.store_stream(BytesIO(b"important"))
