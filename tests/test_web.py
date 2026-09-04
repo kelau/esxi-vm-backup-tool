@@ -34,6 +34,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "demo" in response.text
     assert "esxi.test" in response.text
     assert "refreshDashboard" in response.text
+    assert "VM size" in response.text
+    assert "Actions for demo" in response.text
 
 
 def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
