@@ -86,6 +86,40 @@ class EsxiClient:
                 return vm
         raise LookupError(f"VM not found: {identity}")
 
+    def get_vm_details(self, identity: str) -> dict:
+        vm = self.find_vm(identity)
+        config = getattr(vm, "config", None)
+        hardware = getattr(config, "hardware", None)
+        guest = getattr(vm, "guest", None)
+        summary = getattr(vm, "summary", None)
+        storage = getattr(summary, "storage", None)
+        disks = []
+        for device in getattr(hardware, "device", None) or []:
+            if isinstance(device, vim.vm.device.VirtualDisk):
+                disks.append({
+                    "label": getattr(device.deviceInfo, "label", "Disk"),
+                    "capacity_bytes": int(getattr(device, "capacityInBytes", 0)),
+                    "backing": getattr(device.backing, "fileName", None),
+                })
+        return {
+            "id": vm._moId,
+            "name": getattr(vm, "name", vm._moId),
+            "power_state": str(getattr(getattr(vm, "runtime", None), "powerState", "unknown")),
+            "guest_os": getattr(config, "guestFullName", None),
+            "guest_hostname": getattr(guest, "hostName", None),
+            "ip_address": getattr(guest, "ipAddress", None),
+            "tools_status": str(getattr(guest, "toolsRunningStatus", "unknown")),
+            "cpu": int(getattr(hardware, "numCPU", 0)),
+            "memory_mib": int(getattr(hardware, "memoryMB", 0)),
+            "firmware": getattr(config, "firmware", None),
+            "uuid": getattr(config, "uuid", None),
+            "datastores": [item.name for item in getattr(vm, "datastore", None) or []],
+            "networks": [item.name for item in getattr(vm, "network", None) or []],
+            "committed_bytes": int(getattr(storage, "committed", 0)),
+            "uncommitted_bytes": int(getattr(storage, "uncommitted", 0)),
+            "disks": disks,
+        }
+
     def create_snapshot(self, vm, name: str, quiesce: bool):
         task = vm.CreateSnapshot_Task(
             name=name,

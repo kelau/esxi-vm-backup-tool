@@ -18,6 +18,16 @@ class FakeClient:
     def list_vms(self):
         return [VMInfo(id="vm-1", name="demo", power_state="poweredOn")]
 
+    def get_vm_details(self, identity):
+        return {
+            "id": identity, "name": "demo", "power_state": "poweredOn",
+            "guest_os": "Linux", "guest_hostname": "demo", "ip_address": "192.0.2.1",
+            "tools_status": "guestToolsRunning", "cpu": 2, "memory_mib": 2048,
+            "firmware": "efi", "uuid": "uuid-1", "datastores": ["datastore1"],
+            "networks": ["VM Network"], "committed_bytes": 1024,
+            "uncommitted_bytes": 2048, "disks": [],
+        }
+
 
 def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     config = AppConfig(
@@ -37,6 +47,23 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "VM size" in response.text
     assert "Actions for demo" in response.text
     assert "details.actions[open]" in response.text
+    assert "showVmDetails" in response.text
+
+
+def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    response = TestClient(create_app()).get("/api/v1/vms/vm-1")
+
+    assert response.status_code == 200
+    assert response.json()["cpu"] == 2
+    assert response.json()["backups"] == []
 
 
 def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):

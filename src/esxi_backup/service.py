@@ -23,6 +23,20 @@ class BackupService:
         with self.client_factory(self.config.server) as client:
             return client.list_vms()
 
+    def vm_details(self, identity: str) -> dict:
+        with self.client_factory(self.config.server) as client:
+            details = client.get_vm_details(identity)
+        details["backups"] = [
+            item.model_dump(mode="json") for item in self.repository.list(identity)
+        ]
+        schedule = self.repository.get_schedule(identity)
+        details["schedule"] = schedule.model_dump(mode="json") if schedule else None
+        ova_exports = {item.backup_id: item for item in self.repository.list_ova_exports()}
+        for backup in details["backups"]:
+            export = ova_exports.get(backup["id"])
+            backup["ova"] = export.model_dump(mode="json") if export else None
+        return details
+
     def backup(self, identity: str) -> BackupRecord:
         backup_id = uuid.uuid4().hex
         with self.client_factory(self.config.server) as client:

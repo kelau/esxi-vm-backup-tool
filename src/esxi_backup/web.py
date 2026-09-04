@@ -58,6 +58,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def api_vms():
         return app.state.service.list_vms()
 
+    @app.get("/api/v1/vms/{vm_id}")
+    def api_vm_details(vm_id: str):
+        return app.state.service.vm_details(vm_id)
+
     @app.get("/api/v1/backups")
     def api_backups():
         return app.state.service.repository.list()

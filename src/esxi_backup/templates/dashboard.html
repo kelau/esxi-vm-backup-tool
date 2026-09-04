@@ -12,6 +12,7 @@
     select,input{background:#0c1324;color:#eef3ff;border:1px solid #34415f;border-radius:5px;padding:6px}.schedule{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.schedule input{width:36px}.schedule small{flex-basis:100%;color:var(--muted)}
     .power{display:inline-flex;align-items:center;gap:7px}.power-icon{width:25px;height:25px;display:grid;place-items:center;border-radius:50%;font-size:17px;font-weight:700}.power-icon.on{color:#58d6a9;background:#173a31}.power-icon.off{color:#91a0bc;background:#26304a}.power-icon.suspended{color:#ffd479;background:#45391f}
     .actions-cell{text-align:right;position:relative}.actions{display:inline-block;text-align:left}.actions summary{list-style:none;cursor:pointer;font-size:24px;line-height:24px;padding:5px 10px;border-radius:6px}.actions summary::-webkit-details-marker{display:none}.actions summary:hover,.actions[open] summary{background:#26304a}.actions-menu{position:absolute;right:12px;z-index:10;width:285px;padding:14px;background:#1a2338;border:1px solid #34415f;border-radius:9px;box-shadow:0 14px 35px #0008}.actions-menu h3{font-size:13px;color:var(--muted);margin:12px 0 8px}.actions-menu h3:first-child{margin-top:0}.actions-menu .backup-now{width:100%}.size{white-space:nowrap}.muted{color:var(--muted)}
+    .vm-row{cursor:pointer}.vm-row:hover{background:#1a2338}.modal{border:1px solid #34415f;border-radius:12px;background:#141b2d;color:#eef3ff;width:min(850px,90vw);max-height:85vh;padding:0;box-shadow:0 24px 70px #000b}.modal::backdrop{background:#030712c9}.modal-header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid #26304a}.modal-header h2{margin:0}.modal-close{font-size:22px;background:transparent;color:#eef3ff;padding:4px 10px}.modal-body{padding:22px 24px;overflow:auto;max-height:calc(85vh - 75px)}.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.detail{background:#0c1324;border-radius:7px;padding:11px}.detail small{display:block;color:var(--muted);margin-bottom:4px}.detail-section{margin-top:24px}.detail-section h3{font-size:15px;color:var(--muted)}.detail-list{margin:0;padding-left:20px}.loading{color:var(--muted)}@media(max-width:700px){.detail-grid{grid-template-columns:1fr 1fr}}
     .failed,.error{color:var(--bad)}button{background:var(--accent);border:0;padding:8px 12px;border-radius:6px;color:#08140f;cursor:pointer}.bar{width:130px;height:6px;background:#26304a;border-radius:4px;overflow:hidden;margin-top:5px}.bar span{display:block;height:100%;background:var(--accent)}
   </style>
 </head>
@@ -19,7 +20,7 @@
   <header><h1>ESXi VM Backup</h1><span><a href="#" id="refresh" title="Refresh dashboard">Refresh</a> · <a href="/settings">Settings</a> · <span id="stats" class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
   <div id="connection">{% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}</div>
   <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th>VM</th><th>Power</th><th>VM size</th><th>Latest backup</th><th>Backup size</th><th></th></tr></thead><tbody>
-  {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td><span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span></span></td>
+  {% for vm in vms %}<tr class="vm-row" data-vm-id="{{ vm.id }}"><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td><span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span></span></td>
     <td class="size">{% if vm.provisioned_bytes %}{{ '%.1f'|format(vm.provisioned_bytes/1073741824) }} GiB{% else %}<span class="muted">Unknown</span>{% endif %}</td>
     <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% if latest[vm.id].status == 'running' %}<br><small>{{ latest[vm.id].phase }} · {{ latest[vm.id].progress }}% · {{ '%.1f'|format(latest[vm.id].logical_bytes/1048576) }} MiB</small><div class="bar"><span style="width:{{ latest[vm.id].progress }}%"></span></div>{% endif %}{% if latest[vm.id].error %}<br><small class="error">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
     <td class="size">{% if vm.id in latest and latest[vm.id].status == 'success' %}{{ '%.2f'|format(latest[vm.id].stored_bytes/1073741824) }} GiB{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -40,6 +41,7 @@
     <tr><th>Repository</th><td>{{ config.repository }}</td><th>Chunk / compression</th><td>{{ config.chunk_size_mib }} MiB / level {{ config.compression_level }}</td></tr>
     <tr><th>Quiesced snapshots</th><td>{{ config.quiesce }}</td><th>Credential</th><td>Hidden</td></tr>
   </tbody></table>
+  <dialog id="vm-modal" class="modal"><div class="modal-header"><h2 id="modal-title">VM details</h2><button class="modal-close" aria-label="Close">×</button></div><div id="modal-body" class="modal-body"><p class="loading">Loading…</p></div></dialog>
   <script>
     let loadedAt = new Date();
     let refreshing = false;
@@ -86,6 +88,39 @@
         if (!menu.contains(event.target)) menu.removeAttribute('open');
       });
     });
+    const modal = document.getElementById('vm-modal');
+    const formatBytes = value => value ? (value / 1073741824).toFixed(2) + ' GiB' : '—';
+    const value = item => item ?? '—';
+    function detail(label, content) {
+      const element = document.createElement('div'); element.className = 'detail';
+      const caption = document.createElement('small'); caption.textContent = label;
+      const text = document.createElement('span'); text.textContent = value(content);
+      element.append(caption, text); return element;
+    }
+    async function showVmDetails(vmId) {
+      modal.showModal();
+      document.getElementById('modal-title').textContent = 'VM details';
+      const body = document.getElementById('modal-body');
+      body.replaceChildren(Object.assign(document.createElement('p'), {className: 'loading', textContent: 'Loading…'}));
+      try {
+        const response = await fetch('/api/v1/vms/' + encodeURIComponent(vmId));
+        if (!response.ok) throw new Error(await response.text());
+        const vm = await response.json(); document.getElementById('modal-title').textContent = vm.name;
+        const grid = document.createElement('div'); grid.className = 'detail-grid';
+        grid.append(detail('Power', vm.power_state), detail('Guest OS', vm.guest_os), detail('IP address', vm.ip_address), detail('CPU', vm.cpu), detail('Memory', vm.memory_mib ? vm.memory_mib + ' MiB' : null), detail('Firmware', vm.firmware), detail('VMware Tools', vm.tools_status), detail('Datastores', vm.datastores.join(', ')), detail('Networks', vm.networks.join(', ')), detail('Committed', formatBytes(vm.committed_bytes)), detail('Provisioned', formatBytes(vm.committed_bytes + vm.uncommitted_bytes)), detail('UUID', vm.uuid));
+        body.replaceChildren(grid);
+        const disks = document.createElement('section'); disks.className = 'detail-section'; disks.innerHTML = '<h3>Virtual disks</h3>';
+        const diskList = document.createElement('ul'); diskList.className = 'detail-list'; vm.disks.forEach(disk => { const li = document.createElement('li'); li.textContent = disk.label + ' · ' + formatBytes(disk.capacity_bytes) + (disk.backing ? ' · ' + disk.backing : ''); diskList.append(li); }); disks.append(diskList); body.append(disks);
+        const backups = document.createElement('section'); backups.className = 'detail-section'; backups.innerHTML = '<h3>Backup history</h3>';
+        const backupList = document.createElement('ul'); backupList.className = 'detail-list'; vm.backups.forEach(backup => { const li = document.createElement('li'); li.textContent = new Date(backup.started_at).toLocaleString() + ' · ' + backup.status + ' · ' + formatBytes(backup.logical_bytes) + ' logical · ' + formatBytes(backup.stored_bytes) + ' stored' + (backup.error ? ' · ' + backup.error : ''); backupList.append(li); }); if (!vm.backups.length) backupList.append(Object.assign(document.createElement('li'), {textContent: 'No backups yet'})); backups.append(backupList); body.append(backups);
+      } catch (error) { body.textContent = 'Could not load VM details: ' + error.message; }
+    }
+    document.addEventListener('click', event => {
+      const row = event.target.closest('.vm-row');
+      if (row && !event.target.closest('.actions')) showVmDetails(row.dataset.vmId);
+    });
+    document.querySelector('.modal-close').addEventListener('click', () => modal.close());
+    modal.addEventListener('click', event => { if (event.target === modal) modal.close(); });
     setInterval(() => {
       document.getElementById('updated').textContent = Math.max(1, Math.round((new Date() - loadedAt) / 1000)) + 's ago';
     }, 1000);
