@@ -89,6 +89,7 @@ def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
         "host": "new.test", "port": "443", "username": "new-user", "password": "",
         "verify_ssl": "true", "repository": str(tmp_path / "new-repo"),
         "chunk_size_mib": "16", "compression_level": "8", "quiesce": "true",
+        "pipeline_workers": "3", "parallel_disks": "2",
         "keep_last": "5", "keep_daily": "10", "keep_weekly": "4", "keep_monthly": "6",
     }, follow_redirects=False)
     assert response.status_code == 303

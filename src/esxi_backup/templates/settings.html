@@ -29,6 +29,8 @@
       <label>Repository path<input name="repository" value="{{ config.repository }}" required></label>
       <label>Chunk size (MiB)<input name="chunk_size_mib" type="number" min="1" max="256" value="{{ config.chunk_size_mib }}" required></label>
       <label>Compression level<input name="compression_level" type="number" min="1" max="19" value="{{ config.compression_level }}" required></label>
+      <label>Pipeline workers<input name="pipeline_workers" type="number" min="1" max="8" value="{{ config.pipeline_workers }}" required><small>Parallel hash and compression workers per transfer.</small></label>
+      <label>Parallel disks<input name="parallel_disks" type="number" min="1" max="4" value="{{ config.parallel_disks }}" required><small>Concurrent ESXi disk exports per VM.</small></label>
     </div><label class="check"><input name="quiesce" type="checkbox" value="true" {% if config.quiesce %}checked{% endif %}> Request quiesced snapshots</label>
     <h2>Retention targets</h2><div class="grid">
       <label>Keep last<input name="keep_last" type="number" min="1" value="{{ config.retention.keep_last }}" required></label>

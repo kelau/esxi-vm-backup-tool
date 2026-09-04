@@ -11,7 +11,9 @@ from esxi_backup.repository import BackupRepository
 
 def test_chunks_are_compressed_deduplicated_and_restorable(tmp_path):
     repository = BackupRepository(tmp_path, chunk_size=4, level=1)
-    chunks, logical, stored = repository.store_stream(BytesIO(b"abcdefghabcdefgh"))
+    chunks, logical, stored = repository.store_stream(
+        BytesIO(b"abcdefghabcdefgh"), workers=3
+    )
 
     assert logical == 16
     assert len(chunks) == 4

@@ -3,7 +3,10 @@ from __future__ import annotations
 import io
 import json
 import tarfile
+import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path, PurePosixPath
 
 from .esxi import EsxiClient
@@ -63,43 +66,73 @@ class BackupService:
                 with client.export(vm) as (lease, exports):
                     ovf_descriptor = client.create_ovf_descriptor(vm, exports)
                     export_count = max(1, len(exports))
-                    total_transferred = [0]
-                    for file_index, item in enumerate(exports):
+                    total_transferred = 0
+                    file_progress = [0.0] * len(exports)
+                    active_files: set[str] = set()
+                    progress_lock = threading.Lock()
+                    transfer_started = time.monotonic()
+
+                    def download(file_index, item):
+                        nonlocal total_transferred
                         with client.open_export(item.url) as stream:
                             header_size = int(stream.headers.get("Content-Length", 0)) \
                                 if hasattr(stream, "headers") else 0
                             current_size = item.size or header_size
                             state = {"file_bytes": 0, "last_percent": -1}
+                            with progress_lock:
+                                active_files.add(item.name)
 
-                            def report(
-                                byte_count: int, *, state=state, file_index=file_index,
-                                current_size=current_size, current_file=item.name,
-                            ) -> None:
-                                state["file_bytes"] += byte_count
-                                total_transferred[0] += byte_count
-                                fraction = (
-                                    min(1.0, state["file_bytes"] / current_size)
-                                    if current_size else 0.0
-                                )
-                                percent = min(
-                                    95, max(2, int((file_index + fraction) * 95 / export_count))
-                                )
-                                lease.HttpNfcLeaseProgress(percent)
-                                if percent != state["last_percent"] or current_size == 0:
-                                    self.repository.update_progress(
-                                        backup_id, progress=percent, phase="exporting",
-                                        current_file=current_file,
-                                        logical_bytes=total_transferred[0],
+                            def report(byte_count: int) -> None:
+                                nonlocal total_transferred
+                                with progress_lock:
+                                    state["file_bytes"] += byte_count
+                                    total_transferred += byte_count
+                                    file_progress[file_index] = (
+                                        min(1.0, state["file_bytes"] / current_size)
+                                        if current_size else 0.0
                                     )
-                                    state["last_percent"] = percent
+                                    percent = min(
+                                        95, max(2, int(sum(file_progress) * 95 / export_count))
+                                    )
+                                    elapsed = max(time.monotonic() - transfer_started, 0.001)
+                                    throughput = total_transferred / 1048576 / elapsed
+                                    lease.HttpNfcLeaseProgress(percent)
+                                    if percent != state["last_percent"] or current_size == 0:
+                                        current = ", ".join(sorted(active_files))
+                                        if len(active_files) > 2:
+                                            current = f"{len(active_files)} files"
+                                        self.repository.update_progress(
+                                            backup_id, progress=percent, phase="exporting",
+                                            current_file=current,
+                                            logical_bytes=total_transferred,
+                                            throughput_mib_s=throughput,
+                                        )
+                                        state["last_percent"] = percent
 
                             chunks, file_logical, file_stored = self.repository.store_stream(
-                                stream, on_bytes=report
+                                stream, on_bytes=report, workers=self.config.pipeline_workers
                             )
-                        files.append({"name": item.name, "size": file_logical, "chunks": chunks})
-                        files[-1]["device_id"] = item.device_id
-                        logical += file_logical
-                        stored += file_stored
+                        with progress_lock:
+                            file_progress[file_index] = 1.0
+                            active_files.discard(item.name)
+                        return {
+                            "name": item.name, "size": file_logical, "chunks": chunks,
+                            "device_id": item.device_id,
+                        }, file_logical, file_stored
+
+                    files = [None] * len(exports)
+                    worker_count = min(self.config.parallel_disks, export_count)
+                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                        futures = {
+                            executor.submit(download, index, item): index
+                            for index, item in enumerate(exports)
+                        }
+                        for future in as_completed(futures):
+                            index = futures[future]
+                            file_result, file_logical, file_stored = future.result()
+                            files[index] = file_result
+                            logical += file_logical
+                            stored += file_stored
                 self.repository.update_progress(
                     backup_id, progress=97, phase="writing manifest"
                 )

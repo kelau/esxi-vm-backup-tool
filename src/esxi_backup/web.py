@@ -118,6 +118,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         repository: str = Form(),
         chunk_size_mib: int = Form(),
         compression_level: int = Form(),
+        pipeline_workers: int = Form(),
+        parallel_disks: int = Form(),
         quiesce: bool = Form(default=False),
         keep_last: int = Form(),
         keep_daily: int = Form(),
@@ -133,7 +135,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                     port=port, verify_ssl=verify_ssl,
                 ),
                 repository=repository.strip(), chunk_size_mib=chunk_size_mib,
-                compression_level=compression_level, quiesce=quiesce,
+                compression_level=compression_level, pipeline_workers=pipeline_workers,
+                parallel_disks=parallel_disks, quiesce=quiesce,
                 retention=RetentionConfig(
                     keep_last=keep_last, keep_daily=keep_daily,
                     keep_weekly=keep_weekly, keep_monthly=keep_monthly,

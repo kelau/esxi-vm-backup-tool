@@ -6,7 +6,10 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
+from collections import deque
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
@@ -48,8 +51,9 @@ class BackupRepository:
         self.chunks = self.root / "chunks"
         self.manifests = self.root / "manifests"
         self.chunk_size = chunk_size
-        self.compressor = zstandard.ZstdCompressor(level=level)
+        self.compression_level = level
         self.decompressor = zstandard.ZstdDecompressor()
+        self._write_lock = threading.Lock()
         self.chunks.mkdir(parents=True, exist_ok=True)
         self.manifests.mkdir(parents=True, exist_ok=True)
         # FastAPI executes synchronous routes in worker threads. SQLite serializes writes,
@@ -96,6 +100,7 @@ class BackupRepository:
             "phase": "TEXT NOT NULL DEFAULT 'queued'",
             "current_file": "TEXT",
             "virtual_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "throughput_mib_s": "REAL NOT NULL DEFAULT 0",
         }.items():
             if name not in columns:
                 self.db.execute(f"ALTER TABLE backups ADD COLUMN {name} {definition}")
@@ -161,9 +166,10 @@ class BackupRepository:
         self.db.execute(
             """INSERT INTO backups
                (id,vm_id,vm_name,status,started_at,finished_at,logical_bytes,
-                stored_bytes,virtual_bytes,progress,phase,current_file,error)
+                stored_bytes,virtual_bytes,throughput_mib_s,progress,phase,current_file,error)
                VALUES (:id,:vm_id,:vm_name,:status,:started_at,:finished_at,
-                :logical_bytes,:stored_bytes,:virtual_bytes,:progress,:phase,
+                :logical_bytes,:stored_bytes,:virtual_bytes,:throughput_mib_s,
+                :progress,:phase,
                 :current_file,:error)""",
             values,
         )
@@ -200,46 +206,69 @@ class BackupRepository:
     def update_progress(
         self, backup_id: str, *, progress: int, phase: str,
         current_file: str | None = None, logical_bytes: int | None = None,
+        throughput_mib_s: float = 0,
     ) -> None:
         if logical_bytes is None:
             self.db.execute(
-                "UPDATE backups SET progress=?,phase=?,current_file=? WHERE id=?",
-                (max(0, min(100, progress)), phase, current_file, backup_id),
+                """UPDATE backups SET progress=?,phase=?,current_file=?,throughput_mib_s=?
+                   WHERE id=?""",
+                (max(0, min(100, progress)), phase, current_file,
+                 throughput_mib_s, backup_id),
             )
         else:
             self.db.execute(
-                """UPDATE backups SET progress=?,phase=?,current_file=?,logical_bytes=?
+                """UPDATE backups SET progress=?,phase=?,current_file=?,logical_bytes=?,
+                   throughput_mib_s=?
                    WHERE id=?""",
                 (max(0, min(100, progress)), phase, current_file,
-                 logical_bytes, backup_id),
+                 logical_bytes, throughput_mib_s, backup_id),
             )
         self.db.commit()
 
     def store_stream(
-        self, stream: BinaryIO, on_bytes: Callable[[int], None] | None = None
+        self, stream: BinaryIO, on_bytes: Callable[[int], None] | None = None,
+        workers: int = 2,
     ) -> tuple[list[dict[str, int | str]], int, int]:
         manifest: list[dict[str, int | str]] = []
         logical = stored = 0
-        while data := stream.read(self.chunk_size):
+        pending = deque()
+
+        def prepare(data: bytes):
             digest = hashlib.sha256(data).hexdigest()
+            compressed = zstandard.ZstdCompressor(
+                level=self.compression_level
+            ).compress(data)
+            return digest, len(data), compressed
+
+        def consume(future):
+            nonlocal logical, stored
+            digest, data_size, compressed = future.result()
             target = self.chunks / digest[:2] / f"{digest}.zst"
-            logical += len(data)
-            if not target.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                compressed = self.compressor.compress(data)
-                with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temp:
-                    temp.write(compressed)
-                    temp_path = Path(temp.name)
-                os.replace(temp_path, target)
-                stored += len(compressed)
-            self.db.execute(
-                """INSERT OR IGNORE INTO chunk_index(sha256,logical_size,stored_size)
-                   VALUES(?,?,?)""",
-                (digest, len(data), target.stat().st_size),
-            )
-            manifest.append({"sha256": digest, "size": len(data)})
+            with self._write_lock:
+                if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temp:
+                        temp.write(compressed)
+                        temp_path = Path(temp.name)
+                    os.replace(temp_path, target)
+                    stored += len(compressed)
+                self.db.execute(
+                    """INSERT OR IGNORE INTO chunk_index(sha256,logical_size,stored_size)
+                       VALUES(?,?,?)""",
+                    (digest, data_size, target.stat().st_size),
+                )
+            logical += data_size
+            manifest.append({"sha256": digest, "size": data_size})
             if on_bytes:
-                on_bytes(len(data))
+                on_bytes(data_size)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            while data := stream.read(self.chunk_size):
+                pending.append(executor.submit(prepare, data))
+                if len(pending) >= workers * 2:
+                    consume(pending.popleft())
+            while pending:
+                consume(pending.popleft())
         return manifest, logical, stored
 
     def write_manifest(self, backup_id: str, document: dict) -> None:

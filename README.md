@@ -12,12 +12,19 @@ It includes an automation-friendly CLI, JSON API, and web dashboard.
 
 - Fixed-size SHA-256 chunks are stored once across all VMs and backup generations.
 - Zstandard compression is applied to each new chunk.
+- A bounded pipeline overlaps network reads, hashing, compression, and repository writes.
+- Multiple virtual disks can be exported concurrently with a configurable safety limit.
 - Identical blocks in successive full exports are referenced, not copied.
 - Manifests are tiny JSON documents, so each recovery point is independent even though its data
   is deduplicated.
 
 The ESXi export itself is a full image. Network transfer is therefore not incremental in this
 first release, but repository growth is. A future CBT transport can reduce transfer time further.
+
+For faster backups, tune `chunk_size_mib`, `pipeline_workers` (1–8), and `parallel_disks` (1–4)
+on the Settings page. A practical starting point is 32 MiB, 2 pipeline workers, and 2 parallel
+disks. Increase these cautiously while watching ESXi load, CPU, memory, and repository I/O. The
+dashboard reports live aggregate throughput in MiB/s.
 
 ## Install
 

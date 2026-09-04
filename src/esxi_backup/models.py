@@ -33,6 +33,8 @@ class AppConfig(BaseModel):
     repository: str = "./backups"
     chunk_size_mib: Annotated[int, Field(ge=1, le=256)] = 8
     compression_level: Annotated[int, Field(ge=1, le=19)] = 6
+    pipeline_workers: Annotated[int, Field(ge=1, le=8)] = 2
+    parallel_disks: Annotated[int, Field(ge=1, le=4)] = 2
     quiesce: bool = True
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
@@ -55,6 +57,7 @@ class BackupRecord(BaseModel):
     logical_bytes: int = 0
     stored_bytes: int = 0
     virtual_bytes: int = 0
+    throughput_mib_s: float = 0
     progress: Annotated[int, Field(ge=0, le=100)] = 0
     phase: str = "queued"
     current_file: str | None = None
