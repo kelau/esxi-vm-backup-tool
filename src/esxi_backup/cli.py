@@ -67,6 +67,17 @@ def restore_to_esxi(
     typer.echo(f"Imported {backup_id} as {name}")
 
 
+@app.command("export-ova")
+def export_ova(
+    backup_id: str,
+    output: Path,
+    config: ConfigOption = None,
+):
+    """Stream an OVF-enabled recovery point into a portable OVA archive."""
+    path = service(config).export_ova(backup_id, output)
+    typer.echo(path)
+
+
 @app.command()
 def web(config: ConfigOption = None, host: str = "127.0.0.1", port: int = 8080):
     """Run the web dashboard."""

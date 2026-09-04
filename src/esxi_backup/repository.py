@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import sqlite3
@@ -13,6 +14,30 @@ from typing import BinaryIO
 import zstandard
 
 from .models import BackupRecord, BackupSchedule, BackupStatus
+
+
+class ChunkStream(io.RawIOBase):
+    """Readable stream over verified repository chunks without materializing a full file."""
+
+    def __init__(self, chunks):
+        super().__init__()
+        self._chunks = iter(chunks)
+        self._buffer = bytearray()
+        self._finished = False
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, destination) -> int:
+        while len(self._buffer) < len(destination) and not self._finished:
+            try:
+                self._buffer.extend(next(self._chunks))
+            except StopIteration:
+                self._finished = True
+        count = min(len(destination), len(self._buffer))
+        destination[:count] = self._buffer[:count]
+        del self._buffer[:count]
+        return count
 
 
 class BackupRepository:
@@ -158,6 +183,9 @@ class BackupRepository:
             if hashlib.sha256(data).hexdigest() != digest:
                 raise OSError(f"Chunk integrity failure: {digest}")
             yield data
+
+    def open_chunk_stream(self, chunks: Iterable[dict]) -> io.BufferedReader:
+        return io.BufferedReader(ChunkStream(self.iter_chunks(chunks)))
 
     def save_schedule(self, schedule: BackupSchedule) -> None:
         self.db.execute(

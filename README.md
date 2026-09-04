@@ -42,6 +42,7 @@ esxi-backup backup "my-vm"
 esxi-backup history --json
 esxi-backup restore BACKUP_ID ./recovered
 esxi-backup restore-to-esxi BACKUP_ID --name "Recovered VM" --datastore datastore1
+esxi-backup export-ova BACKUP_ID ./Recovered-VM.ova
 esxi-backup web --host 0.0.0.0 --port 8080
 ```
 
@@ -101,6 +102,10 @@ host. `esxi-backup restore` remains available to reconstruct VMDK/NVRAM files of
 Recovery points made before OVF capture (format version 1 without `ovf_descriptor`) require the
 manual disk-attach workflow: reconstruct `disk-01.vmdk`, create a replacement VM with matching
 firmware and controller type, convert/upload the VMDK, and attach it as an existing disk.
+
+`export-ova` creates a portable OVA on demand by streaming verified chunks directly into its tar
+archive. The compact repository remains the primary storage format; retaining an OVA for every
+recovery point would duplicate full virtual disks and defeat cross-backup deduplication.
 
 ## Development
 

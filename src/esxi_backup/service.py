@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import tarfile
 import uuid
 from pathlib import Path
 
@@ -142,3 +144,34 @@ class BackupService:
                 descriptor, manifest["files"], name,
                 self.repository.iter_chunks, datastore,
             )
+
+    def export_ova(self, backup_id: str, destination: Path) -> Path:
+        manifest_path = self.repository.manifests / f"{backup_id}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        descriptor = manifest.get("ovf_descriptor")
+        if not descriptor:
+            raise ValueError(
+                "This recovery point predates OVF capture and cannot be packaged as an OVA."
+            )
+        destination = destination.with_suffix(".ova")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(".ova.partial")
+        try:
+            # OVF Tool rejects PAX extended headers; GNU tar supports VMDKs over 8 GiB.
+            with tarfile.open(temporary, mode="w", format=tarfile.GNU_FORMAT) as archive:
+                descriptor_bytes = descriptor.encode("utf-8")
+                ovf_info = tarfile.TarInfo(f"{manifest['vm_name']}.ovf")
+                ovf_info.size = len(descriptor_bytes)
+                ovf_info.mtime = 0
+                archive.addfile(ovf_info, io.BytesIO(descriptor_bytes))
+                for file in manifest["files"]:
+                    info = tarfile.TarInfo(str(file["name"]))
+                    info.size = int(file["size"])
+                    info.mtime = 0
+                    with self.repository.open_chunk_stream(file["chunks"]) as stream:
+                        archive.addfile(info, stream)
+            temporary.replace(destination)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        return destination

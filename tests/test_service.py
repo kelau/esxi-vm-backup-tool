@@ -1,3 +1,4 @@
+import tarfile
 from contextlib import contextmanager
 from io import BytesIO
 from types import SimpleNamespace
@@ -110,3 +111,19 @@ def test_restore_to_esxi_uses_captured_ovf(tmp_path):
     })
     service.restore_to_esxi("ovf-backup", "mail-restored", "datastore1")
     assert FakeClient.imported[2:] == ("mail-restored", "datastore1")
+
+
+def test_export_ova_streams_verified_files(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    chunks, size, _ = service.repository.store_stream(BytesIO(b"virtual-disk"))
+    service.repository.write_manifest("ova-backup", {
+        "format": 1, "backup_id": "ova-backup", "vm_id": "vm-42", "vm_name": "mail",
+        "ovf_descriptor": "<Envelope>mail</Envelope>",
+        "files": [{"name": "disk-01.vmdk", "size": size, "chunks": chunks}],
+    })
+
+    output = service.export_ova("ova-backup", tmp_path / "mail")
+
+    with tarfile.open(output) as archive:
+        assert archive.getnames() == ["mail.ovf", "disk-01.vmdk"]
+        assert archive.extractfile("disk-01.vmdk").read() == b"virtual-disk"
