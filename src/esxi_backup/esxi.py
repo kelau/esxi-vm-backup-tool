@@ -183,7 +183,7 @@ class EsxiClient:
 
     def import_ovf(
         self, descriptor: str, files: list[dict], name: str,
-        chunk_reader, datastore_name: str | None = None,
+        chunk_reader, datastore_name: str | None = None, on_progress=None,
     ) -> None:
         datacenter = next(
             entity for entity in self.si.content.rootFolder.childEntity
@@ -224,14 +224,23 @@ class EsxiClient:
                 if file is None:
                     raise LookupError(f"No backup artifact for import device {key}")
                 url = device.url.replace("*", self.config.host)
-                sent += self._upload(url, chunk_reader(file["chunks"]), int(file["size"]))
-                lease.HttpNfcLeaseProgress(min(99, int(sent * 100 / total)))
+                def report(byte_count: int) -> None:
+                    nonlocal sent
+                    sent += byte_count
+                    percent = min(99, int(sent * 100 / total))
+                    lease.HttpNfcLeaseProgress(percent)
+                    if on_progress:
+                        on_progress(percent)
+
+                self._upload(
+                    url, chunk_reader(file["chunks"]), int(file["size"]), report
+                )
             lease.HttpNfcLeaseComplete()
         except Exception:
             lease.HttpNfcLeaseAbort()
             raise
 
-    def _upload(self, url: str, chunks, size: int) -> int:
+    def _upload(self, url: str, chunks, size: int, on_bytes=None) -> int:
         parsed = urlsplit(url)
         context = ssl.create_default_context()
         if not self.config.verify_ssl:
@@ -249,6 +258,8 @@ class EsxiClient:
         for chunk in chunks:
             connection.send(chunk)
             sent += len(chunk)
+            if on_bytes:
+                on_bytes(len(chunk))
         response = connection.getresponse()
         response.read()
         connection.close()

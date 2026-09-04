@@ -34,7 +34,7 @@
     </div></details></td></tr>{% else %}<tr><td colspan="6">No VMs available.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Recent jobs</h2><table id="jobs-table"><thead><tr><th>Started</th><th>VM</th><th>Status</th><th>Logical</th><th>New data</th><th>OVA</th></tr></thead><tbody>
-  {% for b in backups %}<tr><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %} · {{ b.progress }}%<br><small>{{ b.phase }}{% if b.current_file %}: {{ b.current_file }}{% endif %}</small>{% endif %}{% if b.error %}<br><small>{{ b.error }}</small>{% endif %}</td><td>{{ '%.1f'|format(b.logical_bytes/1073741824) }} GiB</td><td>{{ '%.1f'|format(b.stored_bytes/1073741824) }} GiB</td><td>{% set ova = ova_exports.get(b.id) %}{% if ova and ova.status == 'running' %}<span class="running">Packaging {{ ova.progress }}%</span>{% elif ova and ova.status == 'success' %}<a href="/backups/{{ b.id }}/ova">Download OVA</a>{% elif b.id in ova_capable %}<form method="post" action="/backups/{{ b.id }}/ova"><button>Build OVA</button></form>{% else %}<small>Not available</small>{% endif %}{% if ova and ova.error %}<br><small class="error">{{ ova.error }}</small>{% endif %}</td></tr>{% else %}<tr><td colspan="6">No backups yet.</td></tr>{% endfor %}
+  {% for b in backups %}<tr><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %} · {{ b.progress }}%<br><small>{{ b.phase }}{% if b.current_file %}: {{ b.current_file }}{% endif %}</small>{% endif %}{% if b.error %}<br><small>{{ b.error }}</small>{% endif %}</td><td>{{ '%.1f'|format(b.logical_bytes/1073741824) }} GiB</td><td>{{ '%.1f'|format(b.stored_bytes/1073741824) }} GiB</td><td>{% set ova = ova_exports.get(b.id) %}{% set restore = restores.get(b.id) %}{% if ova and ova.status == 'running' %}<span class="running">Packaging {{ ova.progress }}%</span>{% elif ova and ova.status == 'success' %}<a href="/backups/{{ b.id }}/ova">Download OVA</a>{% elif b.id in ova_capable %}<form method="post" action="/backups/{{ b.id }}/ova"><button>Build OVA</button></form>{% else %}<small>Not available</small>{% endif %}{% if ova and ova.error %}<br><small class="error">{{ ova.error }}</small>{% endif %}{% if b.id in ova_capable %}<br>{% if restore and restore.status == 'running' %}<span class="running">Restoring {{ restore.progress }}%</span>{% else %}<button type="button" class="restore-open" data-backup-id="{{ b.id }}" data-vm-name="{{ b.vm_name }}">Restore to ESXi</button>{% if restore and restore.status == 'success' %}<br><small class="ok">Restored as {{ restore.vm_name }}</small>{% endif %}{% endif %}{% if restore and restore.error %}<br><small class="error">{{ restore.error }}</small>{% endif %}{% endif %}</td></tr>{% else %}<tr><td colspan="6">No backups yet.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Configuration</h2><table><tbody>
     <tr><th>ESXi host</th><td>{{ config.server.host }}:{{ config.server.port }}</td><th>TLS verification</th><td>{{ config.server.verify_ssl }}</td></tr>
@@ -42,6 +42,7 @@
     <tr><th>Quiesced snapshots</th><td>{{ config.quiesce }}</td><th>Credential</th><td>Hidden</td></tr>
   </tbody></table>
   <dialog id="vm-modal" class="modal"><div class="modal-header"><h2 id="modal-title">VM details</h2><button class="modal-close" aria-label="Close">×</button></div><div id="modal-body" class="modal-body"><p class="loading">Loading…</p></div></dialog>
+  <dialog id="restore-modal" class="modal"><div class="modal-header"><h2>Restore recovery point</h2><button class="restore-close modal-close" type="button" aria-label="Close">×</button></div><div class="modal-body"><p>Create a new VM from this recovery point. Existing VMs are never overwritten.</p><form id="restore-form" method="post"><label>New VM name<input id="restore-name" name="name" required></label><br><label>Datastore (optional)<input name="datastore" placeholder="First available datastore"></label><br><button type="submit">Start restore</button></form></div></dialog>
   <script>
     let loadedAt = new Date();
     let refreshing = false;
@@ -121,6 +122,28 @@
     });
     document.querySelector('.modal-close').addEventListener('click', () => modal.close());
     modal.addEventListener('click', event => { if (event.target === modal) modal.close(); });
+    const restoreModal = document.getElementById('restore-modal');
+    const restoreForm = document.getElementById('restore-form');
+    document.addEventListener('click', event => {
+      const button = event.target.closest('.restore-open');
+      if (!button) return;
+      restoreForm.action = '/backups/' + encodeURIComponent(button.dataset.backupId) + '/restore-to-esxi';
+      document.getElementById('restore-name').value = button.dataset.vmName + '-Restored';
+      restoreModal.showModal();
+    });
+    restoreForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = restoreForm.querySelector('button[type="submit"]');
+      button.disabled = true; button.textContent = 'Starting…';
+      try {
+        const response = await fetch(restoreForm.action, {method: 'POST', body: new FormData(restoreForm)});
+        if (!response.ok) throw new Error(await response.text());
+        restoreModal.close(); await refreshDashboard();
+      } catch (error) { alert('Restore failed to start: ' + error.message); }
+      finally { button.disabled = false; button.textContent = 'Start restore'; }
+    });
+    document.querySelector('.restore-close').addEventListener('click', () => restoreModal.close());
+    restoreModal.addEventListener('click', event => { if (event.target === restoreModal) restoreModal.close(); });
     setInterval(() => {
       document.getElementById('updated').textContent = Math.max(1, Math.round((new Date() - loadedAt) / 1000)) + 's ago';
     }, 1000);

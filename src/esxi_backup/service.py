@@ -144,7 +144,8 @@ class BackupService:
         return outputs
 
     def restore_to_esxi(
-        self, backup_id: str, name: str, datastore: str | None = None
+        self, backup_id: str, name: str, datastore: str | None = None,
+        on_progress=None,
     ) -> None:
         manifest_path = self.repository.manifests / f"{backup_id}.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -156,8 +157,22 @@ class BackupService:
         with self.client_factory(self.config.server) as client:
             client.import_ovf(
                 descriptor, manifest["files"], name,
-                self.repository.iter_chunks, datastore,
+                self.repository.iter_chunks, datastore, on_progress,
             )
+
+    def restore_to_esxi_for_web(
+        self, backup_id: str, name: str, datastore: str | None = None
+    ) -> None:
+        self.repository.start_restore(backup_id, name)
+        try:
+            self.restore_to_esxi(
+                backup_id, name, datastore,
+                lambda progress: self.repository.update_restore(backup_id, progress),
+            )
+            self.repository.finish_restore(backup_id)
+        except Exception as exc:
+            self.repository.fail_restore(backup_id, str(exc))
+            raise
 
     def export_ova(self, backup_id: str, destination: Path) -> Path:
         manifest_path = self.repository.manifests / f"{backup_id}.json"

@@ -78,3 +78,13 @@ class OvaExportRecord(BaseModel):
     error: str | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
+
+
+class RestoreRecord(BaseModel):
+    backup_id: str
+    vm_name: str
+    status: BackupStatus
+    progress: Annotated[int, Field(ge=0, le=100)] = 0
+    error: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None

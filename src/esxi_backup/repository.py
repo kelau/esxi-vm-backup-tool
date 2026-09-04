@@ -13,7 +13,7 @@ from typing import BinaryIO
 
 import zstandard
 
-from .models import BackupRecord, BackupSchedule, BackupStatus, OvaExportRecord
+from .models import BackupRecord, BackupSchedule, BackupStatus, OvaExportRecord, RestoreRecord
 
 
 class ChunkStream(io.RawIOBase):
@@ -76,6 +76,11 @@ class BackupRepository:
                 backup_id TEXT PRIMARY KEY, status TEXT NOT NULL,
                 progress INTEGER NOT NULL DEFAULT 0, path TEXT, error TEXT,
                 started_at TEXT NOT NULL, finished_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS restores (
+                backup_id TEXT PRIMARY KEY, vm_name TEXT NOT NULL,
+                status TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0,
+                error TEXT, started_at TEXT NOT NULL, finished_at TEXT
             );
         """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(backups)")}
@@ -253,3 +258,40 @@ class BackupRepository:
             "SELECT * FROM ova_exports WHERE backup_id=?", (backup_id,)
         ).fetchone()
         return OvaExportRecord.model_validate(dict(row)) if row else None
+
+    def start_restore(self, backup_id: str, vm_name: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """INSERT INTO restores(backup_id,vm_name,status,progress,started_at)
+               VALUES(?,?,?,0,?) ON CONFLICT(backup_id) DO UPDATE SET
+               vm_name=excluded.vm_name,status=excluded.status,progress=0,
+               error=NULL,started_at=excluded.started_at,finished_at=NULL""",
+            (backup_id, vm_name, BackupStatus.RUNNING, now),
+        )
+        self.db.commit()
+
+    def update_restore(self, backup_id: str, progress: int) -> None:
+        self.db.execute(
+            "UPDATE restores SET progress=? WHERE backup_id=?",
+            (max(0, min(99, progress)), backup_id),
+        )
+        self.db.commit()
+
+    def finish_restore(self, backup_id: str) -> None:
+        self.db.execute(
+            """UPDATE restores SET status=?,progress=100,finished_at=?
+               WHERE backup_id=?""",
+            (BackupStatus.SUCCESS, datetime.now(UTC).isoformat(), backup_id),
+        )
+        self.db.commit()
+
+    def fail_restore(self, backup_id: str, error: str) -> None:
+        self.db.execute(
+            "UPDATE restores SET status=?,error=?,finished_at=? WHERE backup_id=?",
+            (BackupStatus.FAILED, error, datetime.now(UTC).isoformat(), backup_id),
+        )
+        self.db.commit()
+
+    def list_restores(self) -> list[RestoreRecord]:
+        rows = self.db.execute("SELECT * FROM restores").fetchall()
+        return [RestoreRecord.model_validate(dict(row)) for row in rows]

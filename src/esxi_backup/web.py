@@ -45,6 +45,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         ova_capable = {
             backup.id for backup in backups if app.state.service.supports_ova(backup.id)
         }
+        restores = {
+            item.backup_id: item for item in app.state.service.repository.list_restores()
+        }
         return templates.TemplateResponse(request, "dashboard.html", {
             "vms": vms, "backups": backups[:25], "latest": latest,
             "connection_error": connection_error,
@@ -52,6 +55,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "schedules": schedules,
             "ova_exports": ova_exports,
             "ova_capable": ova_capable,
+            "restores": restores,
         })
 
     @app.get("/api/v1/vms")
@@ -69,6 +73,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/ova-exports")
     def api_ova_exports():
         return app.state.service.repository.list_ova_exports()
+
+    @app.get("/api/v1/restores")
+    def api_restores():
+        return app.state.service.repository.list_restores()
 
     @app.get("/api/v1/schedules")
     def api_schedules():
@@ -184,6 +192,28 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         if exports_root not in path.parents or not path.is_file():
             return JSONResponse(status_code=404, content={"detail": "OVA not available"})
         return FileResponse(path, filename=path.name, media_type="application/x-virtualization-ova")
+
+    @app.post("/backups/{backup_id}/restore-to-esxi")
+    def restore_backup(
+        backup_id: str,
+        tasks: BackgroundTasks,
+        name: str = Form(),
+        datastore: str = Form(default=""),
+    ):
+        if not app.state.service.supports_ova(backup_id):
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "Recovery point has no OVF descriptor"},
+            )
+        clean_name = name.strip()
+        if not clean_name:
+            return JSONResponse(status_code=422, content={"detail": "VM name is required"})
+        app.state.service.repository.start_restore(backup_id, clean_name)
+        tasks.add_task(
+            app.state.service.restore_to_esxi_for_web,
+            backup_id, clean_name, datastore.strip() or None,
+        )
+        return JSONResponse(status_code=202, content={"accepted": True})
 
     @app.exception_handler(LookupError)
     def not_found(_request: Request, exc: LookupError):

@@ -6,6 +6,7 @@ from esxi_backup.web import create_app
 
 
 class FakeClient:
+    imported = None
     def __init__(self, _config):
         pass
 
@@ -27,6 +28,11 @@ class FakeClient:
             "networks": ["VM Network"], "committed_bytes": 1024,
             "uncommitted_bytes": 2048, "disks": [],
         }
+
+    def import_ovf(self, descriptor, files, name, chunk_reader, datastore, on_progress=None):
+        FakeClient.imported = (name, datastore)
+        if on_progress:
+            on_progress(80)
 
 
 def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
@@ -112,3 +118,29 @@ def test_web_can_build_and_download_ova(tmp_path, monkeypatch):
     assert service.repository.get_ova_export("backup-1").status == "success"
     assert download.status_code == 200
     assert download.headers["content-type"] == "application/x-virtualization-ova"
+
+
+def test_web_can_restore_specific_recovery_point(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    service.repository.write_manifest("backup-1", {
+        "format": 1, "backup_id": "backup-1", "vm_id": "vm-1", "vm_name": "demo",
+        "ovf_descriptor": "<Envelope/>", "files": [],
+    })
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/backups/backup-1/restore-to-esxi",
+            data={"name": "demo-previous", "datastore": "datastore1"},
+        )
+
+    restore = service.repository.list_restores()[0]
+    assert response.status_code == 202
+    assert restore.status == "success"
+    assert restore.progress == 100
+    assert FakeClient.imported == ("demo-previous", "datastore1")

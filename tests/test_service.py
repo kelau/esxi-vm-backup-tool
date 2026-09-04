@@ -58,8 +58,10 @@ class FakeClient:
     def open_export(self, _url):
         return BytesIO(b"virtual disk")
 
-    def import_ovf(self, descriptor, files, name, chunk_reader, datastore):
+    def import_ovf(self, descriptor, files, name, chunk_reader, datastore, on_progress=None):
         FakeClient.imported = (descriptor, files, name, datastore)
+        if on_progress:
+            on_progress(75)
 
 
 def config(tmp_path):
