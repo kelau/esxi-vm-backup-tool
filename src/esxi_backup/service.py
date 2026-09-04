@@ -68,6 +68,7 @@ class BackupService:
                     export_count = max(1, len(exports))
                     total_transferred = 0
                     file_progress = [0.0] * len(exports)
+                    file_weights = [max(1, int(item.size or 0)) for item in exports]
                     active_files: set[str] = set()
                     progress_lock = threading.Lock()
                     transfer_started = time.monotonic()
@@ -81,6 +82,8 @@ class BackupService:
                             state = {"file_bytes": 0, "last_percent": -1}
                             with progress_lock:
                                 active_files.add(item.name)
+                                if current_size:
+                                    file_weights[file_index] = current_size
 
                             def report(byte_count: int) -> None:
                                 nonlocal total_transferred
@@ -91,9 +94,13 @@ class BackupService:
                                         min(1.0, state["file_bytes"] / current_size)
                                         if current_size else 0.0
                                     )
-                                    percent = min(
-                                        95, max(2, int(sum(file_progress) * 95 / export_count))
-                                    )
+                                    weighted_progress = sum(
+                                        fraction * weight
+                                        for fraction, weight in zip(
+                                            file_progress, file_weights, strict=True
+                                        )
+                                    ) / sum(file_weights)
+                                    percent = min(95, max(2, int(weighted_progress * 95)))
                                     elapsed = max(time.monotonic() - transfer_started, 0.001)
                                     throughput = total_transferred / 1048576 / elapsed
                                     lease.HttpNfcLeaseProgress(percent)
