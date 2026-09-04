@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,6 +57,7 @@ class BackupRepository:
         # and this connection must therefore be allowed to follow the service across them.
         self.db = sqlite3.connect(self.root / "catalog.sqlite3", check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        self._stats_cache: tuple[float, dict] | None = None
         self._migrate()
 
     def _migrate(self) -> None:
@@ -124,6 +126,7 @@ class BackupRepository:
              virtual, backup_id),
         )
         self.db.commit()
+        self._stats_cache = None
 
     def fail(self, backup_id: str, error: str) -> None:
         self.db.execute(
@@ -177,6 +180,7 @@ class BackupRepository:
                     temp_path = Path(temp.name)
                 os.replace(temp_path, target)
                 stored += len(compressed)
+                self._stats_cache = None
             manifest.append({"sha256": digest, "size": len(data)})
             if on_bytes:
                 on_bytes(len(data))
@@ -185,6 +189,7 @@ class BackupRepository:
     def write_manifest(self, backup_id: str, document: dict) -> None:
         target = self.manifests / f"{backup_id}.json"
         target.write_text(json.dumps(document, indent=2), encoding="utf-8")
+        self._stats_cache = None
 
     def restore_stream(self, chunks: Iterable[dict], output: BinaryIO) -> None:
         for data in self.iter_chunks(chunks):
@@ -263,6 +268,35 @@ class BackupRepository:
             "SELECT * FROM ova_exports WHERE backup_id=?", (backup_id,)
         ).fetchone()
         return OvaExportRecord.model_validate(dict(row)) if row else None
+
+    def stats(self) -> dict[str, int]:
+        now = time.monotonic()
+        if self._stats_cache and now - self._stats_cache[0] < 15:
+            return self._stats_cache[1]
+
+        def directory_size(path: Path) -> int:
+            return sum(file.stat().st_size for file in path.rglob("*") if file.is_file()) \
+                if path.exists() else 0
+
+        chunk_bytes = directory_size(self.chunks)
+        manifest_bytes = directory_size(self.manifests)
+        ova_bytes = directory_size(self.root / "exports")
+        catalog_bytes = (self.root / "catalog.sqlite3").stat().st_size
+        result = {
+            "total_bytes": chunk_bytes + manifest_bytes + ova_bytes + catalog_bytes,
+            "chunk_bytes": chunk_bytes,
+            "manifest_bytes": manifest_bytes,
+            "ova_bytes": ova_bytes,
+            "catalog_bytes": catalog_bytes,
+            "recovery_points": self.db.execute(
+                "SELECT COUNT(*) FROM backups WHERE status='success'"
+            ).fetchone()[0],
+        }
+        self._stats_cache = (now, result)
+        return result
+
+    def invalidate_stats(self) -> None:
+        self._stats_cache = None
 
     def start_restore(self, backup_id: str, vm_name: str) -> None:
         now = datetime.now(UTC).isoformat()

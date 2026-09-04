@@ -48,6 +48,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         restores = {
             item.backup_id: item for item in app.state.service.repository.list_restores()
         }
+        repository_stats = app.state.service.repository.stats()
         return templates.TemplateResponse(request, "dashboard.html", {
             "vms": vms, "backups": backups[:25], "latest": latest,
             "connection_error": connection_error,
@@ -56,6 +57,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "ova_exports": ova_exports,
             "ova_capable": ova_capable,
             "restores": restores,
+            "repository_stats": repository_stats,
         })
 
     @app.get("/api/v1/vms")
@@ -69,6 +71,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/backups")
     def api_backups():
         return app.state.service.repository.list()
+
+    @app.get("/api/v1/repository")
+    def api_repository():
+        return app.state.service.repository.stats()
 
     @app.get("/api/v1/ova-exports")
     def api_ova_exports():

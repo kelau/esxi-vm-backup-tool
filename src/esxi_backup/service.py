@@ -216,6 +216,7 @@ class BackupService:
                         backup_id, int(written * 100 / total)
                     )
             temporary.replace(destination)
+            self.repository.invalidate_stats()
         except Exception:
             temporary.unlink(missing_ok=True)
             raise

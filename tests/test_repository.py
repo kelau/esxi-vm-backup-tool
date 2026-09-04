@@ -43,3 +43,15 @@ def test_corrupt_chunk_is_rejected(tmp_path):
     (repository.chunks / digest[:2] / f"{digest}.zst").write_bytes(b"corrupt")
     with pytest.raises(zstandard.ZstdError):
         repository.restore_stream(chunks, BytesIO())
+
+
+def test_repository_stats_include_unique_chunks_and_recovery_points(tmp_path):
+    repository = BackupRepository(tmp_path, chunk_size=4)
+    repository.store_stream(BytesIO(b"abcdefgh"))
+    repository.create(BackupRecord(
+        id="done", vm_id="vm-1", vm_name="vm", status=BackupStatus.RUNNING
+    ))
+    repository.finish("done", logical=8, stored=8, virtual=1024)
+    stats = repository.stats()
+    assert stats["total_bytes"] >= stats["chunk_bytes"] > 0
+    assert stats["recovery_points"] == 1
