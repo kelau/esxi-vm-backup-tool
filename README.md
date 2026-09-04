@@ -1,0 +1,117 @@
+# ESXi VM Backup Tool
+
+A small Python backup service for standalone VMware ESXi hosts. It creates a VM snapshot,
+exports a consistent OVF/VMDK image while the VM stays online, splits the stream into
+content-addressed chunks, compresses only new chunks, and always removes its temporary snapshot.
+It includes an automation-friendly CLI, JSON API, and web dashboard.
+
+> **Project status:** early release. Test restores before relying on it. VMware's free ESXi
+> license may restrict the APIs required for backup; use a licensed host with API access.
+
+## Why backups stay small
+
+- Fixed-size SHA-256 chunks are stored once across all VMs and backup generations.
+- Zstandard compression is applied to each new chunk.
+- Identical blocks in successive full exports are referenced, not copied.
+- Manifests are tiny JSON documents, so each recovery point is independent even though its data
+  is deduplicated.
+
+The ESXi export itself is a full image. Network transfer is therefore not incremental in this
+first release, but repository growth is. A future CBT transport can reduce transfer time further.
+
+## Install
+
+Python 3.11+ is required.
+
+```bash
+python -m venv .venv
+. .venv/bin/activate              # Windows: .venv\Scripts\activate
+pip install -e .
+cp config.example.toml config.toml
+```
+
+Edit `config.toml`. For scheduled jobs, omit the real password from disk and provide
+`ESXI_BACKUP_PASSWORD`. If ESXi uses a self-signed certificate, install its CA certificate;
+`verify_ssl = false` is available for isolated test environments but is not recommended.
+
+## CLI and automation
+
+```bash
+esxi-backup vms
+esxi-backup backup "my-vm"
+esxi-backup history --json
+esxi-backup restore BACKUP_ID ./recovered
+esxi-backup web --host 0.0.0.0 --port 8080
+```
+
+All commands accept `--config PATH`. Alternatively set `ESXI_BACKUP_CONFIG`. Commands return a
+non-zero status on failure, making them suitable for cron, systemd timers, Task Scheduler, or a
+CI runner. Example cron job (daily at 02:15):
+
+```cron
+15 2 * * * /usr/local/sbin/run-esxi-backup vm-42
+```
+
+The root-owned wrapper should set `ESXI_BACKUP_CONFIG` and obtain `ESXI_BACKUP_PASSWORD` from your
+secret manager before executing the command; do not place the password in the crontab.
+
+## Web UI and API
+
+Run `esxi-backup web`, then open `http://localhost:8080`. The dashboard shows VMs, power state,
+latest recovery point, storage consumed, failures, and a **Back up now** action. Configuration
+(with password excluded) is available at `GET /api/v1/config`.
+
+API endpoints:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/vms` | VM inventory |
+| `GET` | `/api/v1/backups` | Backup history and status |
+| `GET` | `/api/v1/config` | Effective non-secret configuration |
+| `POST` | `/api/v1/vms/{id}/backups` | Queue a backup |
+
+Put the web service behind an authenticated TLS reverse proxy before exposing it beyond a trusted
+management network. Bind to `127.0.0.1` (the default) otherwise.
+
+## Backup sequence and consistency
+
+1. Connect to ESXi through the vSphere API.
+2. Create a quiesced snapshot without VM memory. VMware Tools must be installed for application-
+   aware filesystem quiescing. Set `quiesce = false` if unavailable.
+3. Acquire an HTTP NFC lease and stream every export file.
+4. Hash, compress, and atomically persist chunks; write the recovery-point manifest.
+5. Complete the lease and remove the snapshot in a `finally` block, including after failures.
+
+Snapshot lifetime increases consolidation risk. Monitor datastore free space, keep jobs short, and
+alert on failed snapshot removal. Database servers may need guest-native pre/post freeze hooks for
+transaction-level guarantees.
+
+## Restore
+
+`esxi-backup restore` reconstructs the exported OVF/VMDK files and verifies every chunk hash. Import
+the resulting OVF into ESXi/vCenter using the vSphere Client or `ovftool`. Restoration never writes
+to ESXi automatically, reducing the risk of overwriting a running VM.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+ruff check .
+pytest --cov=esxi_backup
+```
+
+Tests use an in-memory ESXi adapter and do not require a hypervisor. See
+[`docs/architecture.md`](docs/architecture.md) and [`docs/operations.md`](docs/operations.md).
+
+## Security
+
+- Create a dedicated least-privilege ESXi account with VM snapshot, export, inventory, and lease
+  permissions. Do not use `root` for scheduled backups.
+- Store the repository on encrypted, access-controlled storage and copy it off-host.
+- Protect configuration permissions and inject credentials through a secret manager.
+- The chunk hash is an integrity check, not a signature. Use filesystem immutability or object-lock
+  replication for ransomware resistance.
+
+## License
+
+MIT

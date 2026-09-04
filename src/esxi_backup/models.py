@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Annotated
+
+from pydantic import BaseModel, Field, SecretStr
+
+
+class BackupStatus(StrEnum):
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class ServerConfig(BaseModel):
+    host: str
+    username: str
+    password: SecretStr
+    port: Annotated[int, Field(ge=1, le=65535)] = 443
+    verify_ssl: bool = True
+
+
+class RetentionConfig(BaseModel):
+    keep_last: Annotated[int, Field(ge=1)] = 7
+    keep_daily: Annotated[int, Field(ge=0)] = 14
+    keep_weekly: Annotated[int, Field(ge=0)] = 8
+    keep_monthly: Annotated[int, Field(ge=0)] = 12
+
+
+class AppConfig(BaseModel):
+    server: ServerConfig
+    repository: str = "./backups"
+    chunk_size_mib: Annotated[int, Field(ge=1, le=256)] = 8
+    compression_level: Annotated[int, Field(ge=1, le=19)] = 6
+    quiesce: bool = True
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
+
+
+class VMInfo(BaseModel):
+    id: str
+    name: str
+    power_state: str
+    guest_os: str | None = None
+    provisioned_bytes: int = 0
+
+
+class BackupRecord(BaseModel):
+    id: str
+    vm_id: str
+    vm_name: str
+    status: BackupStatus
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
+    logical_bytes: int = 0
+    stored_bytes: int = 0
+    error: str | None = None
+
