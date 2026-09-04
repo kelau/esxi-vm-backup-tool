@@ -19,7 +19,7 @@
   <header><h1>ESXi VM Backup</h1><span><a href="#" id="refresh" title="Refresh dashboard">Refresh</a> · <a href="/settings">Settings</a> · <span id="stats" class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
   <div id="connection">{% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}</div>
   <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th>VM</th><th>Power</th><th>VM size</th><th>Latest backup</th><th>Backup size</th><th></th></tr></thead><tbody>
-  {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td><span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span><small>{{ vm.power_state }}</small></span></td>
+  {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td><span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span></span></td>
     <td class="size">{% if vm.provisioned_bytes %}{{ '%.1f'|format(vm.provisioned_bytes/1073741824) }} GiB{% else %}<span class="muted">Unknown</span>{% endif %}</td>
     <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% if latest[vm.id].status == 'running' %}<br><small>{{ latest[vm.id].phase }} · {{ latest[vm.id].progress }}% · {{ '%.1f'|format(latest[vm.id].logical_bytes/1048576) }} MiB</small><div class="bar"><span style="width:{{ latest[vm.id].progress }}%"></span></div>{% endif %}{% if latest[vm.id].error %}<br><small class="error">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
     <td class="size">{% if vm.id in latest and latest[vm.id].status == 'success' %}{{ '%.2f'|format(latest[vm.id].stored_bytes/1073741824) }} GiB{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -52,6 +52,7 @@
         for (const id of ['vm-table', 'jobs-table', 'connection']) {
           const current = document.getElementById(id);
           const replacement = next.getElementById(id);
+          if (id === 'vm-table' && current.querySelector('details.actions[open]')) continue;
           if (current && replacement) current.replaceWith(replacement);
         }
         const nextStats = next.getElementById('stats');
