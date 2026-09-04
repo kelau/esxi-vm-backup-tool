@@ -102,8 +102,12 @@ class EsxiClient:
             pass
         if lease.state == vim.HttpNfcLease.State.error:
             raise lease.error
-        files = [ExportFile(d.deviceId, d.url.replace("*", self.config.host), d.fileSize)
-                 for d in lease.info.deviceUrl]
+        files = [ExportFile(
+            str(getattr(d, "deviceId", None) or getattr(d, "importKey", None)
+                or getattr(d, "key", "export")),
+            d.url.replace("*", self.config.host),
+            d.fileSize,
+        ) for d in lease.info.deviceUrl]
         try:
             yield lease, files
             lease.HttpNfcLeaseComplete()

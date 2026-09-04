@@ -10,7 +10,7 @@
     .stats{color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:10px;overflow:hidden}
     th,td{text-align:left;padding:12px;border-bottom:1px solid #26304a}th{color:var(--muted);font-weight:500}.ok{color:var(--accent)}
     select,input{background:#0c1324;color:#eef3ff;border:1px solid #34415f;border-radius:5px;padding:6px}.schedule{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.schedule input{width:36px}.schedule small{flex-basis:100%;color:var(--muted)}
-    .failed,.error{color:var(--bad)}button{background:var(--accent);border:0;padding:8px 12px;border-radius:6px;color:#08140f;cursor:pointer}
+    .failed,.error{color:var(--bad)}button{background:var(--accent);border:0;padding:8px 12px;border-radius:6px;color:#08140f;cursor:pointer}.bar{width:130px;height:6px;background:#26304a;border-radius:4px;overflow:hidden;margin-top:5px}.bar span{display:block;height:100%;background:var(--accent)}
   </style>
 </head>
 <body><main>
@@ -18,7 +18,7 @@
   {% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}
   <h2>Virtual machines</h2><table><thead><tr><th>VM</th><th>Power</th><th>Latest backup</th><th>Schedule</th><th></th></tr></thead><tbody>
   {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td>{{ vm.power_state }}</td>
-    <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% else %}Never{% endif %}</td>
+    <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% if latest[vm.id].status == 'running' %}<br><small>{{ latest[vm.id].phase }} · {{ latest[vm.id].progress }}%</small><div class="bar"><span style="width:{{ latest[vm.id].progress }}%"></span></div>{% endif %}{% if latest[vm.id].error %}<br><small class="error">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
     <td><form class="schedule" method="post" action="/vms/{{ vm.id }}/schedule"><input type="hidden" name="vm_name" value="{{ vm.name }}">
       {% set s = schedules.get(vm.id) %}<select name="frequency"><option value="disabled" {% if not s or s.frequency == 'disabled' %}selected{% endif %}>Off</option><option value="daily" {% if s and s.frequency == 'daily' %}selected{% endif %}>Daily</option><option value="weekly" {% if s and s.frequency == 'weekly' %}selected{% endif %}>Weekly</option></select>
       <input aria-label="Hour" name="hour" type="number" min="0" max="23" value="{{ s.hour if s else 2 }}"><span>:</span><input aria-label="Minute" name="minute" type="number" min="0" max="59" value="{{ s.minute if s else 0 }}">
@@ -27,7 +27,7 @@
     <td><form method="post" action="/vms/{{ vm.id }}/backups"><button>Back up now</button></form></td></tr>{% else %}<tr><td colspan="4">No VMs available.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Recent jobs</h2><table><thead><tr><th>Started</th><th>VM</th><th>Status</th><th>Logical</th><th>New data</th></tr></thead><tbody>
-  {% for b in backups %}<tr><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}</td><td>{{ '%.1f'|format(b.logical_bytes/1073741824) }} GiB</td><td>{{ '%.1f'|format(b.stored_bytes/1073741824) }} GiB</td></tr>{% else %}<tr><td colspan="5">No backups yet.</td></tr>{% endfor %}
+  {% for b in backups %}<tr><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %} · {{ b.progress }}%<br><small>{{ b.phase }}{% if b.current_file %}: {{ b.current_file }}{% endif %}</small>{% endif %}{% if b.error %}<br><small>{{ b.error }}</small>{% endif %}</td><td>{{ '%.1f'|format(b.logical_bytes/1073741824) }} GiB</td><td>{{ '%.1f'|format(b.stored_bytes/1073741824) }} GiB</td></tr>{% else %}<tr><td colspan="5">No backups yet.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Configuration</h2><table><tbody>
     <tr><th>ESXi host</th><td>{{ config.server.host }}:{{ config.server.port }}</td><th>TLS verification</th><td>{{ config.server.verify_ssl }}</td></tr>

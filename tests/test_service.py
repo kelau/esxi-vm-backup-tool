@@ -63,6 +63,8 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     record = service.backup("mail")
     assert record.status == "success"
+    assert record.progress == 100
+    assert record.phase == "complete"
     assert record.logical_bytes == 12
     assert FakeClient.removed
     assert (tmp_path / "manifests" / f"{record.id}.json").exists()
@@ -71,4 +73,3 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
 def test_list_vms(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     assert service.list_vms()[0].name == "mail"
-

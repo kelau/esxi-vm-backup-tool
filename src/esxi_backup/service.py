@@ -29,34 +29,76 @@ class BackupService:
                                   status=BackupStatus.RUNNING)
             self.repository.create(record)
             snapshot = None
+            successful = False
+            logical = stored = 0
             try:
+                self.repository.update_progress(
+                    backup_id, progress=1, phase="creating snapshot"
+                )
                 snapshot = client.create_snapshot(
                     vm, f"esxi-backup-{backup_id[:8]}", self.config.quiesce
                 )
                 files = []
-                logical = stored = 0
                 with client.export(vm) as (lease, exports):
                     total_expected = sum(item.size for item in exports) or 1
                     transferred = 0
                     for item in exports:
+                        self.repository.update_progress(
+                            backup_id,
+                            progress=min(95, int(transferred * 95 / total_expected)),
+                            phase="exporting",
+                            current_file=item.name,
+                        )
+                        last_percent = -1
+                        current_file = item.name
+
+                        def report(byte_count: int, current_file: str = current_file) -> None:
+                            nonlocal transferred, last_percent
+                            transferred += byte_count
+                            percent = min(95, int(transferred * 95 / total_expected))
+                            lease_percent = min(99, int(transferred * 100 / total_expected))
+                            lease.HttpNfcLeaseProgress(lease_percent)
+                            if percent != last_percent:
+                                self.repository.update_progress(
+                                    backup_id, progress=percent, phase="exporting",
+                                    current_file=current_file,
+                                )
+                                last_percent = percent
+
                         with client.open_export(item.url) as stream:
-                            chunks, file_logical, file_stored = self.repository.store_stream(stream)
+                            chunks, file_logical, file_stored = self.repository.store_stream(
+                                stream, on_bytes=report
+                            )
                         files.append({"name": item.name, "size": file_logical, "chunks": chunks})
                         logical += file_logical
                         stored += file_stored
-                        transferred += file_logical
-                        lease.HttpNfcLeaseProgress(min(99, int(transferred * 100 / total_expected)))
+                self.repository.update_progress(
+                    backup_id, progress=97, phase="writing manifest"
+                )
                 self.repository.write_manifest(backup_id, {
                     "format": 1, "backup_id": backup_id, "vm_id": vm._moId,
                     "vm_name": vm.name, "files": files,
                 })
-                self.repository.finish(backup_id, logical=logical, stored=stored)
+                successful = True
             except Exception as exc:
                 self.repository.fail(backup_id, str(exc))
                 raise
             finally:
                 if snapshot is not None:
-                    client.remove_snapshot(snapshot)
+                    if successful:
+                        self.repository.update_progress(
+                            backup_id, progress=99, phase="removing snapshot"
+                        )
+                    try:
+                        client.remove_snapshot(snapshot)
+                    except Exception as cleanup_error:
+                        if successful:
+                            self.repository.fail(
+                                backup_id, f"Snapshot cleanup failed: {cleanup_error}"
+                            )
+                        raise
+            if successful:
+                self.repository.finish(backup_id, logical=logical, stored=stored)
         return self.repository.list(record.vm_id)[0]
 
     def restore(self, backup_id: str, destination: Path) -> list[Path]:

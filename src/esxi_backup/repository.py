@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
@@ -48,26 +48,47 @@ class BackupRepository:
                 minute INTEGER NOT NULL, weekday INTEGER NOT NULL DEFAULT 0
             );
         """)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(backups)")}
+        for name, definition in {
+            "progress": "INTEGER NOT NULL DEFAULT 0",
+            "phase": "TEXT NOT NULL DEFAULT 'queued'",
+            "current_file": "TEXT",
+        }.items():
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE backups ADD COLUMN {name} {definition}")
+        self.db.execute(
+            "UPDATE backups SET phase='failed' WHERE status='failed' AND phase='queued'"
+        )
+        self.db.execute(
+            """UPDATE backups SET phase='complete',progress=100
+               WHERE status='success' AND phase='queued'"""
+        )
         self.db.commit()
 
     def create(self, record: BackupRecord) -> None:
         values = record.model_dump(mode="json")
         self.db.execute(
-            "INSERT INTO backups VALUES (:id,:vm_id,:vm_name,:status,:started_at,"
-            ":finished_at,:logical_bytes,:stored_bytes,:error)", values
+            """INSERT INTO backups
+               (id,vm_id,vm_name,status,started_at,finished_at,logical_bytes,
+                stored_bytes,progress,phase,current_file,error)
+               VALUES (:id,:vm_id,:vm_name,:status,:started_at,:finished_at,
+                :logical_bytes,:stored_bytes,:progress,:phase,:current_file,:error)""",
+            values,
         )
         self.db.commit()
 
     def finish(self, backup_id: str, *, logical: int, stored: int) -> None:
         self.db.execute(
-            "UPDATE backups SET status=?,finished_at=?,logical_bytes=?,stored_bytes=? WHERE id=?",
+            """UPDATE backups SET status=?,finished_at=?,logical_bytes=?,stored_bytes=?,
+               progress=100,phase='complete',current_file=NULL WHERE id=?""",
             (BackupStatus.SUCCESS, datetime.now(UTC).isoformat(), logical, stored, backup_id),
         )
         self.db.commit()
 
     def fail(self, backup_id: str, error: str) -> None:
         self.db.execute(
-            "UPDATE backups SET status=?,finished_at=?,error=? WHERE id=?",
+            """UPDATE backups SET status=?,finished_at=?,error=?,phase='failed',
+               current_file=NULL WHERE id=?""",
             (BackupStatus.FAILED, datetime.now(UTC).isoformat(), error, backup_id),
         )
         self.db.commit()
@@ -81,7 +102,18 @@ class BackupRepository:
         rows = self.db.execute(query + " ORDER BY started_at DESC", params).fetchall()
         return [BackupRecord.model_validate(dict(row)) for row in rows]
 
-    def store_stream(self, stream: BinaryIO) -> tuple[list[dict[str, int | str]], int, int]:
+    def update_progress(
+        self, backup_id: str, *, progress: int, phase: str, current_file: str | None = None
+    ) -> None:
+        self.db.execute(
+            "UPDATE backups SET progress=?,phase=?,current_file=? WHERE id=?",
+            (max(0, min(100, progress)), phase, current_file, backup_id),
+        )
+        self.db.commit()
+
+    def store_stream(
+        self, stream: BinaryIO, on_bytes: Callable[[int], None] | None = None
+    ) -> tuple[list[dict[str, int | str]], int, int]:
         manifest: list[dict[str, int | str]] = []
         logical = stored = 0
         while data := stream.read(self.chunk_size):
@@ -97,6 +129,8 @@ class BackupRepository:
                 os.replace(temp_path, target)
                 stored += len(compressed)
             manifest.append({"sha256": digest, "size": len(data)})
+            if on_bytes:
+                on_bytes(len(data))
         return manifest, logical, stored
 
     def write_manifest(self, backup_id: str, document: dict) -> None:
