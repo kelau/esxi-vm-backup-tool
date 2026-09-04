@@ -33,6 +33,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "demo" in response.text
     assert "esxi.test" in response.text
+    assert "hasRunningBackup" in response.text
 
 
 def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
