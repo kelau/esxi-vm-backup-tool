@@ -107,3 +107,28 @@ def test_repository_stats_include_unique_chunks_and_recovery_points(tmp_path):
     stats = repository.stats()
     assert stats["total_bytes"] >= stats["chunk_bytes"] > 0
     assert stats["recovery_points"] == 1
+
+
+def test_delete_vm_preserves_shared_chunks_and_removes_unique_data(tmp_path):
+    repository = BackupRepository(tmp_path, chunk_size=4)
+    shared, _, _ = repository.store_stream(BytesIO(b"same"))
+    unique, _, _ = repository.store_stream(BytesIO(b"only"))
+    for backup_id, vm_id, chunks in (
+        ("one", "vm-1", shared + unique), ("two", "vm-2", shared),
+    ):
+        repository.create(BackupRecord(
+            id=backup_id, vm_id=vm_id, vm_name=vm_id, status=BackupStatus.SUCCESS
+        ))
+        repository.write_manifest(backup_id, {
+            "backup_id": backup_id, "vm_id": vm_id, "files": [{"chunks": chunks}],
+        })
+
+    result = repository.delete_vm("vm-1")
+
+    assert result["recovery_points"] == 1
+    assert repository.list("vm-1") == []
+    assert len(repository.list("vm-2")) == 1
+    assert (repository.chunks / shared[0]["sha256"][:2] /
+            f"{shared[0]['sha256']}.zst").exists()
+    assert not (repository.chunks / unique[0]["sha256"][:2] /
+                f"{unique[0]['sha256']}.zst").exists()

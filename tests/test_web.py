@@ -20,6 +20,8 @@ class FakeClient:
         return [VMInfo(id="vm-1", name="demo", power_state="poweredOn")]
 
     def get_vm_details(self, identity):
+        if identity != "vm-1":
+            raise LookupError(identity)
         return {
             "id": identity, "name": "demo", "power_state": "poweredOn",
             "guest_os": "Linux", "guest_hostname": "demo", "ip_address": "192.0.2.1",
@@ -45,6 +47,14 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
         id="running-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.RUNNING,
         phase="exporting", logical_bytes=2 * 1024**3, throughput_mib_s=12.5,
     ))
+    service.repository.create(BackupRecord(
+        id="deleted-1", vm_id="vm-deleted", vm_name="deleted-demo",
+        status=BackupStatus.SUCCESS, virtual_bytes=10 * 1024**3,
+    ))
+    service.repository.write_manifest("deleted-1", {
+        "backup_id": "deleted-1", "vm_id": "vm-deleted", "vm_name": "deleted-demo",
+        "ovf_descriptor": "<Envelope/>", "files": [],
+    })
     monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
     monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
 
@@ -65,6 +75,13 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "hideFailedJobs" in response.text
     assert "bar.indeterminate" in response.text
     assert "2.00 GiB" in response.text
+    assert "Live on ESXi" in response.text
+    assert "Backup only" in response.text
+    assert "deleted-demo" in response.text
+    assert 'data-vm-state="backup_only"' in response.text
+    assert "Remove all backups" in response.text
+    assert "Build OVA" in response.text
+    assert "Restore to ESXi" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
@@ -81,6 +98,29 @@ def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["cpu"] == 2
     assert response.json()["backups"] == []
+
+
+def test_repository_only_vm_details_do_not_require_esxi_vm(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    service.repository.create(BackupRecord(
+        id="backup-1", vm_id="vm-deleted", vm_name="deleted-demo",
+        status=BackupStatus.SUCCESS, virtual_bytes=10 * 1024**3,
+    ))
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    response = TestClient(create_app()).get(
+        "/api/v1/vms/vm-deleted?repository_only=true"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["inventory_state"] == "backup_only"
+    assert response.json()["name"] == "deleted-demo"
+    assert len(response.json()["backups"]) == 1
 
 
 def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):

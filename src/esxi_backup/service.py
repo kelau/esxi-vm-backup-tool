@@ -14,6 +14,10 @@ from .models import AppConfig, BackupRecord, BackupStatus, VMInfo
 from .repository import BackupRepository
 
 
+class BackupCancelled(Exception):
+    pass
+
+
 class BackupService:
     def __init__(self, config: AppConfig, client_factory=EsxiClient):
         self.config = config
@@ -21,17 +25,42 @@ class BackupService:
         self.repository = BackupRepository(
             Path(config.repository), config.chunk_size_mib * 1024 * 1024, config.compression_level
         )
+        self._cancel_events: dict[str, threading.Event] = {}
+        self._cancel_lock = threading.Lock()
+
+    def cancel_backup(self, backup_id: str) -> bool:
+        with self._cancel_lock:
+            event = self._cancel_events.get(backup_id)
+            if event is None:
+                return False
+            event.set()
+            return True
 
     def list_vms(self) -> list[VMInfo]:
         with self.client_factory(self.config.server) as client:
             return client.list_vms()
 
-    def vm_details(self, identity: str) -> dict:
-        with self.client_factory(self.config.server) as client:
-            details = client.get_vm_details(identity)
-        details["backups"] = [
-            item.model_dump(mode="json") for item in self.repository.list(identity)
-        ]
+    def vm_details(self, identity: str, repository_only: bool = False) -> dict:
+        backup_records = self.repository.list(identity)
+        try:
+            if repository_only:
+                raise LookupError(identity)
+            with self.client_factory(self.config.server) as client:
+                details = client.get_vm_details(identity)
+            details["inventory_state"] = "live"
+        except LookupError:
+            if not backup_records:
+                raise
+            newest = backup_records[0]
+            details = {
+                "id": identity, "name": newest.vm_name, "power_state": "unavailable",
+                "guest_os": None, "guest_hostname": None, "ip_address": None,
+                "tools_status": "unavailable", "cpu": 0, "memory_mib": 0,
+                "firmware": None, "uuid": None, "datastores": [], "networks": [],
+                "committed_bytes": 0, "uncommitted_bytes": newest.virtual_bytes,
+                "disks": [], "inventory_state": "backup_only",
+            }
+        details["backups"] = [item.model_dump(mode="json") for item in backup_records]
         schedule = self.repository.get_schedule(identity)
         details["schedule"] = schedule.model_dump(mode="json") if schedule else None
         ova_exports = {item.backup_id: item for item in self.repository.list_ova_exports()}
@@ -47,6 +76,9 @@ class BackupService:
             record = BackupRecord(id=backup_id, vm_id=vm._moId, vm_name=vm.name,
                                   status=BackupStatus.RUNNING)
             self.repository.create(record)
+            cancel_event = threading.Event()
+            with self._cancel_lock:
+                self._cancel_events[backup_id] = cancel_event
             snapshot = None
             successful = False
             logical = stored = 0
@@ -89,6 +121,8 @@ class BackupService:
 
                             def report(byte_count: int) -> None:
                                 nonlocal total_transferred
+                                if cancel_event.is_set():
+                                    raise BackupCancelled("Backup cancelled by user")
                                 with progress_lock:
                                     state["file_bytes"] += byte_count
                                     total_transferred += byte_count
@@ -154,8 +188,12 @@ class BackupService:
                     "vm_name": vm.name, "ovf_descriptor": ovf_descriptor, "files": files,
                 })
                 successful = True
+            except BackupCancelled:
+                self.repository.cancel(backup_id)
             except Exception as exc:
                 self.repository.fail(backup_id, str(exc))
+                with self._cancel_lock:
+                    self._cancel_events.pop(backup_id, None)
                 raise
             finally:
                 if snapshot is not None:
@@ -166,6 +204,8 @@ class BackupService:
                     try:
                         client.remove_snapshot(snapshot)
                     except Exception as cleanup_error:
+                        with self._cancel_lock:
+                            self._cancel_events.pop(backup_id, None)
                         if successful:
                             self.repository.fail(
                                 backup_id, f"Snapshot cleanup failed: {cleanup_error}"
@@ -175,6 +215,8 @@ class BackupService:
                 self.repository.finish(
                     backup_id, logical=logical, stored=stored, virtual=virtual
                 )
+            with self._cancel_lock:
+                self._cancel_events.pop(backup_id, None)
         return self.repository.list(record.vm_id)[0]
 
     def restore(self, backup_id: str, destination: Path) -> list[Path]:

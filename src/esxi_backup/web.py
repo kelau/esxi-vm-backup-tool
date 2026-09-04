@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.templating import Jinja2Templates
 
 from .config import load_config, resolve_config_path, save_config
-from .models import AppConfig, BackupSchedule, RetentionConfig, ServerConfig
+from .models import AppConfig, BackupSchedule, RetentionConfig, ServerConfig, VMInfo
 from .scheduler import BackupScheduler
 from .service import BackupService
 
@@ -38,6 +38,16 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         latest = {}
         for backup in backups:
             latest.setdefault(backup.vm_id, backup)
+        live_vm_ids = {vm.id for vm in vms}
+        vm_states = {vm.id: "live" for vm in vms}
+        for vm_id, backup in latest.items():
+            if vm_id not in live_vm_ids:
+                vms.append(VMInfo(
+                    id=vm_id, name=backup.vm_name, power_state="unavailable",
+                    guest_os="Repository recovery point",
+                    provisioned_bytes=backup.virtual_bytes,
+                ))
+                vm_states[vm_id] = "backup_only"
         schedules = {item.vm_id: item for item in app.state.scheduler.schedules()}
         ova_exports = {
             item.backup_id: item for item in app.state.service.repository.list_ova_exports()
@@ -45,6 +55,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         ova_capable = {
             backup.id for backup in backups if app.state.service.supports_ova(backup.id)
         }
+        latest_recovery = {}
+        for backup in backups:
+            if backup.status == "success" and backup.id in ova_capable:
+                latest_recovery.setdefault(backup.vm_id, backup)
         restores = {
             item.backup_id: item for item in app.state.service.repository.list_restores()
         }
@@ -58,6 +72,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "ova_capable": ova_capable,
             "restores": restores,
             "repository_stats": repository_stats,
+            "vm_states": vm_states,
+            "latest_recovery": latest_recovery,
         })
 
     @app.get("/api/v1/vms")
@@ -65,8 +81,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         return app.state.service.list_vms()
 
     @app.get("/api/v1/vms/{vm_id}")
-    def api_vm_details(vm_id: str):
-        return app.state.service.vm_details(vm_id)
+    def api_vm_details(vm_id: str, repository_only: bool = False):
+        return app.state.service.vm_details(vm_id, repository_only=repository_only)
 
     @app.get("/api/v1/backups")
     def api_backups():
@@ -179,6 +195,22 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def html_backup(vm_id: str, tasks: BackgroundTasks):
         tasks.add_task(app.state.service.backup, vm_id)
         return RedirectResponse("/", status_code=303)
+
+    @app.post("/repository/vms/{vm_id}/delete")
+    def delete_repository_vm(vm_id: str):
+        try:
+            result = app.state.service.repository.delete_vm(vm_id)
+        except RuntimeError as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+        return JSONResponse(content=result)
+
+    @app.post("/backups/{backup_id}/cancel")
+    def cancel_backup(backup_id: str):
+        if not app.state.service.cancel_backup(backup_id):
+            return JSONResponse(
+                status_code=409, content={"detail": "Backup is no longer active"}
+            )
+        return JSONResponse(status_code=202, content={"accepted": True})
 
     @app.post("/backups/{backup_id}/ova")
     def build_ova(backup_id: str, tasks: BackgroundTasks):

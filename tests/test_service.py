@@ -69,6 +69,20 @@ class FakeClient:
             on_progress(75)
 
 
+class CancelStream(BytesIO):
+    def __init__(self, data, cancel):
+        super().__init__(data)
+        self.cancel = cancel
+        self.triggered = False
+
+    def read(self, size=-1):
+        data = super().read(size)
+        if data and not self.triggered:
+            self.triggered = True
+            self.cancel()
+        return data
+
+
 def config(tmp_path):
     return AppConfig(
         server=ServerConfig(host="host", username="user", password="secret"),
@@ -86,6 +100,24 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
     assert record.virtual_bytes == 1024
     assert FakeClient.removed
     assert (tmp_path / "manifests" / f"{record.id}.json").exists()
+
+
+def test_backup_can_be_cancelled_and_still_removes_snapshot(tmp_path):
+    service = None
+
+    class CancelClient(FakeClient):
+        def open_export(self, _url):
+            def cancel():
+                active = service.repository.list("vm-42")[0]
+                assert service.cancel_backup(active.id)
+            return CancelStream(b"virtual disk", cancel)
+
+    service = BackupService(config(tmp_path), client_factory=CancelClient)
+    record = service.backup("mail")
+
+    assert record.status == "cancelled"
+    assert record.phase == "cancelled"
+    assert FakeClient.removed
 
 
 def test_list_vms(tmp_path):

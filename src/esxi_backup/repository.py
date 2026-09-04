@@ -223,6 +223,15 @@ class BackupRepository:
         self.db.commit()
 
     @synchronized_db
+    def cancel(self, backup_id: str) -> None:
+        self.db.execute(
+            """UPDATE backups SET status=?,finished_at=?,error=NULL,phase='cancelled',
+               current_file=NULL WHERE id=?""",
+            (BackupStatus.CANCELLED, datetime.now(UTC).isoformat(), backup_id),
+        )
+        self.db.commit()
+
+    @synchronized_db
     def list(self, vm_id: str | None = None) -> list[BackupRecord]:
         query = "SELECT * FROM backups"
         params: tuple[str, ...] = ()
@@ -441,6 +450,80 @@ class BackupRepository:
                 "SELECT COUNT(*) FROM backups WHERE status='success'"
             ).fetchone()[0],
         }
+
+    @synchronized_db
+    def delete_vm(self, vm_id: str) -> dict[str, int]:
+        rows = self.db.execute(
+            "SELECT id,status FROM backups WHERE vm_id=?", (vm_id,)
+        ).fetchall()
+        if not rows:
+            raise LookupError(f"No repository backups found for VM {vm_id}")
+        if any(row["status"] == BackupStatus.RUNNING for row in rows):
+            raise RuntimeError("Cannot remove a VM while its backup is running")
+        backup_ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" for _ in backup_ids)
+        ova_rows = self.db.execute(
+            f"SELECT path,status FROM ova_exports WHERE backup_id IN ({placeholders})",
+            backup_ids,
+        ).fetchall()
+        restore_running = self.db.execute(
+            f"""SELECT 1 FROM restores WHERE backup_id IN ({placeholders})
+                AND status='running' LIMIT 1""",
+            backup_ids,
+        ).fetchone()
+        if any(row["status"] == BackupStatus.RUNNING for row in ova_rows) \
+                or restore_running:
+            raise RuntimeError(
+                "Cannot remove a VM while an OVA export or restore is running"
+            )
+        for backup_id in backup_ids:
+            (self.manifests / f"{backup_id}.json").unlink(missing_ok=True)
+        exports_root = (self.root / "exports").resolve()
+        for row in ova_rows:
+            if row["path"]:
+                path = Path(row["path"]).resolve()
+                if path.parent == exports_root:
+                    path.unlink(missing_ok=True)
+        self.db.execute(
+            f"DELETE FROM restores WHERE backup_id IN ({placeholders})", backup_ids
+        )
+        self.db.execute(
+            f"DELETE FROM ova_exports WHERE backup_id IN ({placeholders})", backup_ids
+        )
+        self.db.execute("DELETE FROM backups WHERE vm_id=?", (vm_id,))
+        self.db.execute("DELETE FROM schedules WHERE vm_id=?", (vm_id,))
+
+        referenced = set()
+        manifest_bytes = 0
+        for manifest_path in self.manifests.glob("*.json"):
+            manifest_bytes += manifest_path.stat().st_size
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                referenced.update(
+                    str(chunk["sha256"])
+                    for file in manifest.get("files", [])
+                    for chunk in file.get("chunks", [])
+                )
+            except (OSError, ValueError, KeyError):
+                continue
+        reclaimed = 0
+        indexed = self.db.execute(
+            "SELECT sha256,stored_size FROM chunk_index"
+        ).fetchall()
+        for row in indexed:
+            if row["sha256"] not in referenced:
+                chunk_path = self.chunks / row["sha256"][:2] / f"{row['sha256']}.zst"
+                chunk_path.unlink(missing_ok=True)
+                reclaimed += int(row["stored_size"])
+                self.db.execute(
+                    "DELETE FROM chunk_index WHERE sha256=?", (row["sha256"],)
+                )
+        self.db.execute(
+            "INSERT OR REPLACE INTO repository_meta(key,value) VALUES('manifest_bytes',?)",
+            (manifest_bytes,),
+        )
+        self.db.commit()
+        return {"recovery_points": len(backup_ids), "reclaimed_bytes": reclaimed}
 
     @synchronized_db
     def start_restore(self, backup_id: str, vm_name: str) -> None:
