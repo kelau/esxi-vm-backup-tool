@@ -41,6 +41,10 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
         repository=str(tmp_path),
     )
     service = BackupService(config, client_factory=FakeClient)
+    service.repository.create(BackupRecord(
+        id="running-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.RUNNING,
+        phase="exporting", logical_bytes=2 * 1024**3, throughput_mib_s=12.5,
+    ))
     monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
     monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
 
@@ -60,6 +64,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Hide failed" in response.text
     assert "hideFailedJobs" in response.text
     assert "bar.indeterminate" in response.text
+    assert "2.00 GiB" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
