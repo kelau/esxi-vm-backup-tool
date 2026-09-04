@@ -172,6 +172,7 @@ class EsxiClient:
 
     def create_ovf_descriptor(self, vm, files: list[ExportFile]) -> str:
         params = vim.OvfManager.CreateDescriptorParams(
+            includeImageFiles=False,
             ovfFiles=[vim.OvfManager.OvfFile(
                 deviceId=item.device_id, path=item.name, size=item.size,
             ) for item in files]
