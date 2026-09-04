@@ -54,6 +54,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Actions for demo" in response.text
     assert "details.actions[open]" in response.text
     assert "showVmDetails" in response.text
+    assert "error-brief" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
