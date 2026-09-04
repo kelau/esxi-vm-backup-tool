@@ -106,7 +106,7 @@ class EsxiClient:
             str(getattr(d, "deviceId", None) or getattr(d, "importKey", None)
                 or getattr(d, "key", "export")),
             d.url.replace("*", self.config.host),
-            d.fileSize,
+            int(d.fileSize or 0),
         ) for d in lease.info.deviceUrl]
         try:
             yield lease, files

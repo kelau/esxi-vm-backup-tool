@@ -103,12 +103,21 @@ class BackupRepository:
         return [BackupRecord.model_validate(dict(row)) for row in rows]
 
     def update_progress(
-        self, backup_id: str, *, progress: int, phase: str, current_file: str | None = None
+        self, backup_id: str, *, progress: int, phase: str,
+        current_file: str | None = None, logical_bytes: int | None = None,
     ) -> None:
-        self.db.execute(
-            "UPDATE backups SET progress=?,phase=?,current_file=? WHERE id=?",
-            (max(0, min(100, progress)), phase, current_file, backup_id),
-        )
+        if logical_bytes is None:
+            self.db.execute(
+                "UPDATE backups SET progress=?,phase=?,current_file=? WHERE id=?",
+                (max(0, min(100, progress)), phase, current_file, backup_id),
+            )
+        else:
+            self.db.execute(
+                """UPDATE backups SET progress=?,phase=?,current_file=?,logical_bytes=?
+                   WHERE id=?""",
+                (max(0, min(100, progress)), phase, current_file,
+                 logical_bytes, backup_id),
+            )
         self.db.commit()
 
     def store_stream(

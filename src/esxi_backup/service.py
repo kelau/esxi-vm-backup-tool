@@ -40,32 +40,37 @@ class BackupService:
                 )
                 files = []
                 with client.export(vm) as (lease, exports):
-                    total_expected = sum(item.size for item in exports) or 1
-                    transferred = 0
-                    for item in exports:
-                        self.repository.update_progress(
-                            backup_id,
-                            progress=min(95, int(transferred * 95 / total_expected)),
-                            phase="exporting",
-                            current_file=item.name,
-                        )
-                        last_percent = -1
-                        current_file = item.name
-
-                        def report(byte_count: int, current_file: str = current_file) -> None:
-                            nonlocal transferred, last_percent
-                            transferred += byte_count
-                            percent = min(95, int(transferred * 95 / total_expected))
-                            lease_percent = min(99, int(transferred * 100 / total_expected))
-                            lease.HttpNfcLeaseProgress(lease_percent)
-                            if percent != last_percent:
-                                self.repository.update_progress(
-                                    backup_id, progress=percent, phase="exporting",
-                                    current_file=current_file,
-                                )
-                                last_percent = percent
-
+                    export_count = max(1, len(exports))
+                    total_transferred = [0]
+                    for file_index, item in enumerate(exports):
                         with client.open_export(item.url) as stream:
+                            header_size = int(stream.headers.get("Content-Length", 0)) \
+                                if hasattr(stream, "headers") else 0
+                            current_size = item.size or header_size
+                            state = {"file_bytes": 0, "last_percent": -1}
+
+                            def report(
+                                byte_count: int, *, state=state, file_index=file_index,
+                                current_size=current_size, current_file=item.name,
+                            ) -> None:
+                                state["file_bytes"] += byte_count
+                                total_transferred[0] += byte_count
+                                fraction = (
+                                    min(1.0, state["file_bytes"] / current_size)
+                                    if current_size else 0.0
+                                )
+                                percent = min(
+                                    95, max(2, int((file_index + fraction) * 95 / export_count))
+                                )
+                                lease.HttpNfcLeaseProgress(percent)
+                                if percent != state["last_percent"] or current_size == 0:
+                                    self.repository.update_progress(
+                                        backup_id, progress=percent, phase="exporting",
+                                        current_file=current_file,
+                                        logical_bytes=total_transferred[0],
+                                    )
+                                    state["last_percent"] = percent
+
                             chunks, file_logical, file_stored = self.repository.store_stream(
                                 stream, on_bytes=report
                             )
