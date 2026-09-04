@@ -116,6 +116,11 @@ class BackupRepository:
             """UPDATE backups SET phase='complete',progress=100
                WHERE status='success' AND phase='queued'"""
         )
+        self.db.execute(
+            """UPDATE backups SET virtual_bytes=COALESCE(virtual_bytes,0),
+               throughput_mib_s=COALESCE(throughput_mib_s,0),
+               progress=COALESCE(progress,0),phase=COALESCE(phase,'queued')"""
+        )
         self.db.commit()
         self._backfill_repository_index()
 

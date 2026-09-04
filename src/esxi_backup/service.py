@@ -78,7 +78,9 @@ class BackupService:
                         with client.open_export(item.url) as stream:
                             header_size = int(stream.headers.get("Content-Length", 0)) \
                                 if hasattr(stream, "headers") else 0
-                            current_size = item.size or header_size
+                            # The lease's device capacity can differ from the actual sparse NFC
+                            # stream length. Prefer the HTTP byte count for honest progress.
+                            current_size = header_size or item.size
                             state = {"file_bytes": 0, "last_percent": -1}
                             with progress_lock:
                                 active_files.add(item.name)
