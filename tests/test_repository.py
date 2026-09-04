@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import pytest
@@ -65,6 +66,26 @@ def test_legacy_null_metrics_are_normalized_on_read(tmp_path):
     assert saved.throughput_mib_s == 0
     assert saved.virtual_bytes == 0
     assert saved.phase == "queued"
+
+
+def test_catalog_reads_and_progress_writes_are_thread_safe(tmp_path):
+    repository = BackupRepository(tmp_path)
+    repository.create(BackupRecord(
+        id="active", vm_id="vm-1", vm_name="db", status=BackupStatus.RUNNING
+    ))
+
+    def update(value):
+        repository.update_progress(
+            "active", progress=value % 95, phase="exporting",
+            logical_bytes=value * 1024, throughput_mib_s=12.5,
+        )
+        return repository.list("vm-1")[0]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        records = list(executor.map(update, range(100)))
+
+    assert all(record.id == "active" for record in records)
+    assert all(record.vm_name == "db" for record in records)
 
 
 def test_corrupt_chunk_is_rejected(tmp_path):

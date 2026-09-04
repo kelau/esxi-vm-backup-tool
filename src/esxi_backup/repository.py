@@ -11,12 +11,22 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import BinaryIO
 
 import zstandard
 
 from .models import BackupRecord, BackupSchedule, BackupStatus, OvaExportRecord, RestoreRecord
+
+
+def synchronized_db(method):
+    """Serialize complete SQLite operations on the shared service connection."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._db_lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class ChunkStream(io.RawIOBase):
@@ -54,6 +64,7 @@ class BackupRepository:
         self.compression_level = level
         self.decompressor = zstandard.ZstdDecompressor()
         self._write_lock = threading.Lock()
+        self._db_lock = threading.RLock()
         self.chunks.mkdir(parents=True, exist_ok=True)
         self.manifests.mkdir(parents=True, exist_ok=True)
         # FastAPI executes synchronous routes in worker threads. SQLite serializes writes,
@@ -62,6 +73,7 @@ class BackupRepository:
         self.db.row_factory = sqlite3.Row
         self._migrate()
 
+    @synchronized_db
     def _migrate(self) -> None:
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS backups (
@@ -131,6 +143,7 @@ class BackupRepository:
         self.db.commit()
         self._backfill_repository_index()
 
+    @synchronized_db
     def _backfill_repository_index(self) -> None:
         initialized = self.db.execute(
             "SELECT value FROM repository_meta WHERE key='index_initialized'"
@@ -173,6 +186,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def create(self, record: BackupRecord) -> None:
         values = record.model_dump(mode="json")
         self.db.execute(
@@ -187,6 +201,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def finish(
         self, backup_id: str, *, logical: int, stored: int, virtual: int = 0
     ) -> None:
@@ -198,6 +213,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def fail(self, backup_id: str, error: str) -> None:
         self.db.execute(
             """UPDATE backups SET status=?,finished_at=?,error=?,phase='failed',
@@ -206,6 +222,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def list(self, vm_id: str | None = None) -> list[BackupRecord]:
         query = "SELECT * FROM backups"
         params: tuple[str, ...] = ()
@@ -228,6 +245,7 @@ class BackupRepository:
                 values[field] = default
         return BackupRecord.model_validate(values)
 
+    @synchronized_db
     def update_progress(
         self, backup_id: str, *, progress: int, phase: str,
         current_file: str | None = None, logical_bytes: int | None = None,
@@ -277,11 +295,12 @@ class BackupRepository:
                         temp_path = Path(temp.name)
                     os.replace(temp_path, target)
                     stored += len(compressed)
-                self.db.execute(
-                    """INSERT OR IGNORE INTO chunk_index(sha256,logical_size,stored_size)
-                       VALUES(?,?,?)""",
-                    (digest, data_size, target.stat().st_size),
-                )
+                with self._db_lock:
+                    self.db.execute(
+                        """INSERT OR IGNORE INTO chunk_index
+                           (sha256,logical_size,stored_size) VALUES(?,?,?)""",
+                        (digest, data_size, target.stat().st_size),
+                    )
             logical += data_size
             manifest.append({"sha256": digest, "size": data_size})
             if on_bytes:
@@ -296,6 +315,7 @@ class BackupRepository:
                 consume(pending.popleft())
         return manifest, logical, stored
 
+    @synchronized_db
     def write_manifest(self, backup_id: str, document: dict) -> None:
         target = self.manifests / f"{backup_id}.json"
         previous_size = target.stat().st_size if target.exists() else 0
@@ -324,6 +344,7 @@ class BackupRepository:
     def open_chunk_stream(self, chunks: Iterable[dict]) -> io.BufferedReader:
         return io.BufferedReader(ChunkStream(self.iter_chunks(chunks)))
 
+    @synchronized_db
     def save_schedule(self, schedule: BackupSchedule) -> None:
         self.db.execute(
             """INSERT INTO schedules(vm_id,vm_name,frequency,hour,minute,weekday)
@@ -335,14 +356,17 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def list_schedules(self) -> list[BackupSchedule]:
         rows = self.db.execute("SELECT * FROM schedules ORDER BY vm_name").fetchall()
         return [BackupSchedule.model_validate(dict(row)) for row in rows]
 
+    @synchronized_db
     def get_schedule(self, vm_id: str) -> BackupSchedule | None:
         row = self.db.execute("SELECT * FROM schedules WHERE vm_id=?", (vm_id,)).fetchone()
         return BackupSchedule.model_validate(dict(row)) if row else None
 
+    @synchronized_db
     def start_ova_export(self, backup_id: str) -> None:
         now = datetime.now(UTC).isoformat()
         self.db.execute(
@@ -354,6 +378,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def update_ova_export(self, backup_id: str, progress: int) -> None:
         self.db.execute(
             "UPDATE ova_exports SET progress=? WHERE backup_id=?",
@@ -361,6 +386,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def finish_ova_export(self, backup_id: str, path: Path) -> None:
         self.db.execute(
             """UPDATE ova_exports SET status=?,progress=100,path=?,size_bytes=?,finished_at=?
@@ -370,6 +396,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def fail_ova_export(self, backup_id: str, error: str) -> None:
         self.db.execute(
             """UPDATE ova_exports SET status=?,error=?,finished_at=? WHERE backup_id=?""",
@@ -377,16 +404,19 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def list_ova_exports(self) -> list[OvaExportRecord]:
         rows = self.db.execute("SELECT * FROM ova_exports").fetchall()
         return [OvaExportRecord.model_validate(dict(row)) for row in rows]
 
+    @synchronized_db
     def get_ova_export(self, backup_id: str) -> OvaExportRecord | None:
         row = self.db.execute(
             "SELECT * FROM ova_exports WHERE backup_id=?", (backup_id,)
         ).fetchone()
         return OvaExportRecord.model_validate(dict(row)) if row else None
 
+    @synchronized_db
     def stats(self) -> dict[str, int]:
         chunk_bytes = self.db.execute(
             "SELECT COALESCE(SUM(stored_size),0) FROM chunk_index"
@@ -412,6 +442,7 @@ class BackupRepository:
             ).fetchone()[0],
         }
 
+    @synchronized_db
     def start_restore(self, backup_id: str, vm_name: str) -> None:
         now = datetime.now(UTC).isoformat()
         self.db.execute(
@@ -423,6 +454,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def update_restore(self, backup_id: str, progress: int) -> None:
         self.db.execute(
             "UPDATE restores SET progress=? WHERE backup_id=?",
@@ -430,6 +462,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def finish_restore(self, backup_id: str) -> None:
         self.db.execute(
             """UPDATE restores SET status=?,progress=100,finished_at=?
@@ -438,6 +471,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def fail_restore(self, backup_id: str, error: str) -> None:
         self.db.execute(
             "UPDATE restores SET status=?,error=?,finished_at=? WHERE backup_id=?",
@@ -445,6 +479,7 @@ class BackupRepository:
         )
         self.db.commit()
 
+    @synchronized_db
     def list_restores(self) -> list[RestoreRecord]:
         rows = self.db.execute("SELECT * FROM restores").fetchall()
         return [RestoreRecord.model_validate(dict(row)) for row in rows]
