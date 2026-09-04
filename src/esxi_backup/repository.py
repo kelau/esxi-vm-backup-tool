@@ -147,13 +147,17 @@ class BackupRepository:
         target.write_text(json.dumps(document, indent=2), encoding="utf-8")
 
     def restore_stream(self, chunks: Iterable[dict], output: BinaryIO) -> None:
+        for data in self.iter_chunks(chunks):
+            output.write(data)
+
+    def iter_chunks(self, chunks: Iterable[dict]):
         for item in chunks:
             digest = str(item["sha256"])
             compressed = (self.chunks / digest[:2] / f"{digest}.zst").read_bytes()
             data = self.decompressor.decompress(compressed)
             if hashlib.sha256(data).hexdigest() != digest:
                 raise OSError(f"Chunk integrity failure: {digest}")
-            output.write(data)
+            yield data
 
     def save_schedule(self, schedule: BackupSchedule) -> None:
         self.db.execute(

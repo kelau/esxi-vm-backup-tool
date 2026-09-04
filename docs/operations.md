@@ -32,6 +32,11 @@ At least quarterly, restore the newest recovery point to a staging datastore, im
 new name on an isolated network, boot it, and perform application-level validation. A successful
 backup job alone does not prove recoverability.
 
-For format version 1, run `esxi-backup restore BACKUP_ID DESTINATION`, create a replacement VM with
-matching firmware and virtual disk-controller type, upload the reconstructed VMDK, and attach it as
-an existing disk. Keep the original VM powered off but intact until validation succeeds.
+For OVF-enabled recovery points, run `esxi-backup restore-to-esxi BACKUP_ID --name NEW_NAME` and add
+`--datastore NAME` when the host has multiple datastores. The tool verifies every chunk while
+streaming it to an ESXi import lease and creates a new VM; it never replaces an existing VM.
+
+For older format-version-1 points without an OVF descriptor, run `esxi-backup restore BACKUP_ID
+DESTINATION`, create a replacement VM with matching firmware and virtual disk-controller type,
+upload/convert the reconstructed VMDK, and attach it as an existing disk. Keep the original VM
+powered off but intact until validation succeeds.

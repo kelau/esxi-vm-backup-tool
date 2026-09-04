@@ -41,6 +41,7 @@ esxi-backup vms
 esxi-backup backup "my-vm"
 esxi-backup history --json
 esxi-backup restore BACKUP_ID ./recovered
+esxi-backup restore-to-esxi BACKUP_ID --name "Recovered VM" --datastore datastore1
 esxi-backup web --host 0.0.0.0 --port 8080
 ```
 
@@ -92,11 +93,14 @@ transaction-level guarantees.
 
 ## Restore
 
-`esxi-backup restore` reconstructs the exported VMDK and NVRAM files and verifies every chunk hash.
-This release does not yet capture an OVF descriptor: create a replacement VM with matching firmware,
-guest OS, CPU, memory, and controller type, upload `disk-01.vmdk` to its datastore directory, and
-attach it as an existing disk. Restoration never writes to ESXi automatically, reducing the risk of
-overwriting a running VM. Native OVF capture/import is on the roadmap.
+New recovery points capture a native OVF descriptor. Use `restore-to-esxi` to verify and stream their
+chunks directly into an HTTP NFC import lease under a new VM name; the command never overwrites an
+existing VM. The datastore option is optional and defaults to the first datastore visible to the
+host. `esxi-backup restore` remains available to reconstruct VMDK/NVRAM files offline.
+
+Recovery points made before OVF capture (format version 1 without `ovf_descriptor`) require the
+manual disk-attach workflow: reconstruct `disk-01.vmdk`, create a replacement VM with matching
+firmware and controller type, convert/upload the VMDK, and attach it as an existing disk.
 
 ## Development
 

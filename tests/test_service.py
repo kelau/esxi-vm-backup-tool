@@ -20,6 +20,7 @@ class FakeLease:
 
 class FakeClient:
     removed = False
+    imported = None
 
     def __init__(self, _config):
         self.vm = SimpleNamespace(_moId="vm-42", name="mail")
@@ -46,10 +47,18 @@ class FakeClient:
 
     @contextmanager
     def export(self, _vm):
-        yield FakeLease(), [SimpleNamespace(name="disk.vmdk", url="memory://disk", size=12)]
+        yield FakeLease(), [SimpleNamespace(
+            name="disk.vmdk", url="memory://disk", size=12, device_id="disk-1"
+        )]
+
+    def create_ovf_descriptor(self, _vm, _exports):
+        return "<ovf>descriptor</ovf>"
 
     def open_export(self, _url):
         return BytesIO(b"virtual disk")
+
+    def import_ovf(self, descriptor, files, name, chunk_reader, datastore):
+        FakeClient.imported = (descriptor, files, name, datastore)
 
 
 def config(tmp_path):
@@ -91,3 +100,13 @@ def test_restore_maps_esxi_device_keys_to_portable_names(tmp_path):
 
     assert [path.name for path in outputs] == ["disk-01.vmdk", "vm.nvram"]
     assert outputs[0].read_bytes() == b"disk-data"
+
+
+def test_restore_to_esxi_uses_captured_ovf(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    service.repository.write_manifest("ovf-backup", {
+        "format": 1, "backup_id": "ovf-backup", "vm_id": "vm-42", "vm_name": "mail",
+        "ovf_descriptor": "<ovf>descriptor</ovf>", "files": [],
+    })
+    service.restore_to_esxi("ovf-backup", "mail-restored", "datastore1")
+    assert FakeClient.imported[2:] == ("mail-restored", "datastore1")

@@ -55,6 +55,18 @@ def restore(backup_id: str, destination: Path, config: ConfigOption = None):
         typer.echo(path)
 
 
+@app.command("restore-to-esxi")
+def restore_to_esxi(
+    backup_id: str,
+    name: Annotated[str, typer.Option("--name", help="Name for the newly imported VM")],
+    datastore: Annotated[str | None, typer.Option("--datastore")] = None,
+    config: ConfigOption = None,
+):
+    """Import an OVF-enabled recovery point into ESXi as a new VM."""
+    service(config).restore_to_esxi(backup_id, name, datastore)
+    typer.echo(f"Imported {backup_id} as {name}")
+
+
 @app.command()
 def web(config: ConfigOption = None, host: str = "127.0.0.1", port: int = 8080):
     """Run the web dashboard."""

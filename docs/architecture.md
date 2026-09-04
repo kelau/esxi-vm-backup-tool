@@ -29,6 +29,9 @@ Chunks are addressed by SHA-256 of uncompressed content. A temporary file is com
 destination directory and atomically renamed, so interruption cannot expose a partial chunk under
 its final name. A manifest lists ordered chunks for each exported file. SQLite stores operational
 state and dashboard history; manifests and chunks contain everything necessary for reconstruction.
+New manifests also contain the native OVF descriptor and export device identifiers. Direct restore
+creates an ESXi import specification and streams verified chunks to its HTTP NFC lease without
+materializing a second full local copy.
 
 ## Concurrency
 

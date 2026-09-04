@@ -40,6 +40,7 @@ class BackupService:
                 )
                 files = []
                 with client.export(vm) as (lease, exports):
+                    ovf_descriptor = client.create_ovf_descriptor(vm, exports)
                     export_count = max(1, len(exports))
                     total_transferred = [0]
                     for file_index, item in enumerate(exports):
@@ -75,6 +76,7 @@ class BackupService:
                                 stream, on_bytes=report
                             )
                         files.append({"name": item.name, "size": file_logical, "chunks": chunks})
+                        files[-1]["device_id"] = item.device_id
                         logical += file_logical
                         stored += file_stored
                 self.repository.update_progress(
@@ -82,7 +84,7 @@ class BackupService:
                 )
                 self.repository.write_manifest(backup_id, {
                     "format": 1, "backup_id": backup_id, "vm_id": vm._moId,
-                    "vm_name": vm.name, "files": files,
+                    "vm_name": vm.name, "ovf_descriptor": ovf_descriptor, "files": files,
                 })
                 successful = True
             except Exception as exc:
@@ -124,3 +126,19 @@ class BackupService:
                 self.repository.restore_stream(file["chunks"], output)
             outputs.append(target)
         return outputs
+
+    def restore_to_esxi(
+        self, backup_id: str, name: str, datastore: str | None = None
+    ) -> None:
+        manifest_path = self.repository.manifests / f"{backup_id}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        descriptor = manifest.get("ovf_descriptor")
+        if not descriptor:
+            raise ValueError(
+                "This recovery point predates OVF capture; use offline restore and attach its disk."
+            )
+        with self.client_factory(self.config.server) as client:
+            client.import_ovf(
+                descriptor, manifest["files"], name,
+                self.repository.iter_chunks, datastore,
+            )

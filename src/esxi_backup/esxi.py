@@ -4,6 +4,8 @@ import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from http.client import HTTPConnection, HTTPSConnection
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from pyVim.connect import Disconnect, SmartConnect
@@ -25,6 +27,7 @@ class ExportFile:
     name: str
     url: str
     size: int
+    device_id: str
 
 
 class EsxiClient:
@@ -102,12 +105,22 @@ class EsxiClient:
             pass
         if lease.state == vim.HttpNfcLease.State.error:
             raise lease.error
-        files = [ExportFile(
-            str(getattr(d, "deviceId", None) or getattr(d, "importKey", None)
-                or getattr(d, "key", "export")),
-            d.url.replace("*", self.config.host),
-            int(d.fileSize or 0),
-        ) for d in lease.info.deviceUrl]
+        files = []
+        disk_number = 0
+        for index, device in enumerate(lease.info.deviceUrl, start=1):
+            if getattr(device, "disk", False):
+                disk_number += 1
+                fallback_name = f"disk-{disk_number:02d}.vmdk"
+            elif "nvram" in str(getattr(device, "importKey", "")).lower():
+                fallback_name = "vm.nvram"
+            else:
+                fallback_name = f"artifact-{index:02d}.bin"
+            files.append(ExportFile(
+                str(getattr(device, "targetId", None) or fallback_name),
+                device.url.replace("*", self.config.host),
+                int(device.fileSize or 0),
+                str(getattr(device, "key", None) or getattr(device, "importKey", index)),
+            ))
         try:
             yield lease, files
             lease.HttpNfcLeaseComplete()
@@ -122,3 +135,89 @@ class EsxiClient:
             context.verify_mode = ssl.CERT_NONE
         request = Request(url, headers={"Cookie": self.si._stub.cookie})
         return urlopen(request, context=context, timeout=300)
+
+    def create_ovf_descriptor(self, vm, files: list[ExportFile]) -> str:
+        params = vim.OvfManager.CreateDescriptorParams(
+            ovfFiles=[vim.OvfManager.OvfFile(
+                deviceId=item.device_id, path=item.name, size=item.size,
+            ) for item in files]
+        )
+        result = self.si.content.ovfManager.CreateDescriptor(vm, params)
+        if result.error:
+            raise RuntimeError("; ".join(str(error) for error in result.error))
+        return result.ovfDescriptor
+
+    def import_ovf(
+        self, descriptor: str, files: list[dict], name: str,
+        chunk_reader, datastore_name: str | None = None,
+    ) -> None:
+        datacenter = next(
+            entity for entity in self.si.content.rootFolder.childEntity
+            if isinstance(entity, vim.Datacenter)
+        )
+        compute = datacenter.hostFolder.childEntity[0]
+        host = compute.host[0]
+        resource_pool = compute.resourcePool
+        datastores = list(host.datastore)
+        datastore = next(
+            (item for item in datastores if item.name == datastore_name), None
+        ) if datastore_name else (datastores[0] if datastores else None)
+        if datastore is None:
+            raise LookupError(f"Datastore not found: {datastore_name}")
+        params = vim.OvfManager.CreateImportSpecParams(
+            entityName=name, hostSystem=host, diskProvisioning="thin"
+        )
+        result = self.si.content.ovfManager.CreateImportSpec(
+            descriptor, resource_pool, datastore, params
+        )
+        if result.error:
+            raise RuntimeError("; ".join(str(error) for error in result.error))
+        lease = resource_pool.ImportVApp(result.importSpec, datacenter.vmFolder, host)
+        while lease.state == vim.HttpNfcLease.State.initializing:
+            pass
+        if lease.state == vim.HttpNfcLease.State.error:
+            raise lease.error
+        by_device = {str(item.get("device_id")): item for item in files}
+        by_name = {str(item["name"]): item for item in files}
+        file_items = {str(item.deviceId): item for item in result.fileItem}
+        total = sum(int(item["size"]) for item in files) or 1
+        sent = 0
+        try:
+            for device in lease.info.deviceUrl:
+                key = str(getattr(device, "importKey", None) or device.key)
+                spec = file_items.get(key)
+                file = by_device.get(key) or (by_name.get(spec.path) if spec else None)
+                if file is None:
+                    raise LookupError(f"No backup artifact for import device {key}")
+                url = device.url.replace("*", self.config.host)
+                sent += self._upload(url, chunk_reader(file["chunks"]), int(file["size"]))
+                lease.HttpNfcLeaseProgress(min(99, int(sent * 100 / total)))
+            lease.HttpNfcLeaseComplete()
+        except Exception:
+            lease.HttpNfcLeaseAbort()
+            raise
+
+    def _upload(self, url: str, chunks, size: int) -> int:
+        parsed = urlsplit(url)
+        context = ssl.create_default_context()
+        if not self.config.verify_ssl:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        connection_class = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
+        kwargs = {"context": context} if parsed.scheme == "https" else {}
+        connection = connection_class(parsed.hostname, parsed.port, timeout=300, **kwargs)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        connection.putrequest("PUT", path)
+        connection.putheader("Cookie", self.si._stub.cookie)
+        connection.putheader("Content-Length", str(size))
+        connection.endheaders()
+        sent = 0
+        for chunk in chunks:
+            connection.send(chunk)
+            sent += len(chunk)
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+        if response.status >= 300:
+            raise OSError(f"ESXi upload failed with HTTP {response.status}")
+        return sent
