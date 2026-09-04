@@ -59,6 +59,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "menu.removeAttribute('open')" in response.text
     assert "Hide failed" in response.text
     assert "hideFailedJobs" in response.text
+    assert "bar.indeterminate" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):

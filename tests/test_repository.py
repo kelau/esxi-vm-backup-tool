@@ -38,6 +38,21 @@ def test_catalog_lifecycle(tmp_path):
     assert saved.stored_bytes == 20
 
 
+def test_interrupted_backup_is_failed_when_repository_reopens(tmp_path):
+    repository = BackupRepository(tmp_path)
+    repository.create(BackupRecord(
+        id="interrupted", vm_id="vm-1", vm_name="db", status=BackupStatus.RUNNING
+    ))
+    repository.db.close()
+
+    reopened = BackupRepository(tmp_path)
+    saved = reopened.list("vm-1")[0]
+
+    assert saved.status == BackupStatus.FAILED
+    assert saved.phase == "failed"
+    assert saved.error == "Backup interrupted by service restart"
+
+
 def test_corrupt_chunk_is_rejected(tmp_path):
     repository = BackupRepository(tmp_path, chunk_size=64)
     chunks, _, _ = repository.store_stream(BytesIO(b"important"))

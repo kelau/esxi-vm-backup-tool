@@ -121,6 +121,13 @@ class BackupRepository:
                throughput_mib_s=COALESCE(throughput_mib_s,0),
                progress=COALESCE(progress,0),phase=COALESCE(phase,'queued')"""
         )
+        self.db.execute(
+            """UPDATE backups SET status='failed',phase='failed',finished_at=?,
+               current_file=NULL,
+               error=COALESCE(error,'Backup interrupted by service restart')
+               WHERE status='running'""",
+            (datetime.now(UTC).isoformat(),),
+        )
         self.db.commit()
         self._backfill_repository_index()
 

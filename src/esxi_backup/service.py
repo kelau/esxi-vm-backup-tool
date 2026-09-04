@@ -107,11 +107,15 @@ class BackupService:
                                     throughput = total_transferred / 1048576 / elapsed
                                     lease.HttpNfcLeaseProgress(percent)
                                     if percent != state["last_percent"] or current_size == 0:
+                                        phase = (
+                                            "exporting"
+                                            if current_size else "exporting (size unavailable)"
+                                        )
                                         current = ", ".join(sorted(active_files))
                                         if len(active_files) > 2:
                                             current = f"{len(active_files)} files"
                                         self.repository.update_progress(
-                                            backup_id, progress=percent, phase="exporting",
+                                            backup_id, progress=percent, phase=phase,
                                             current_file=current,
                                             logical_bytes=total_transferred,
                                             throughput_mib_s=throughput,
