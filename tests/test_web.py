@@ -56,6 +56,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "showVmDetails" in response.text
     assert "error-brief" in response.text
     assert "Total repository" in response.text
+    assert "menu.removeAttribute('open')" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):

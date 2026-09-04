@@ -74,14 +74,18 @@
       if (!form.closest('#vm-table') && !form.closest('#jobs-table')) return;
       event.preventDefault();
       const button = form.querySelector('button');
+      const originalButtonText = button?.textContent;
       if (button) { button.disabled = true; button.textContent = 'Working…'; }
       try {
-        const response = await fetch(form.action, {method: form.method, body: new FormData(form)});
+        const response = await fetch(form.action, {method: form.method, body: new FormData(form), headers: {'X-Requested-With': 'fetch'}});
         if (!response.ok) throw new Error((await response.text()) || response.statusText);
+        const menu = form.closest('details.actions');
+        if (menu) menu.removeAttribute('open');
+        if (button) { button.disabled = false; button.textContent = originalButtonText; }
         await refreshDashboard();
       } catch (error) {
         alert('Action failed: ' + error.message);
-        if (button) { button.disabled = false; button.textContent = 'Retry'; }
+        if (button) { button.disabled = false; button.textContent = originalButtonText; }
       }
     });
     document.getElementById('refresh').addEventListener('click', event => {
