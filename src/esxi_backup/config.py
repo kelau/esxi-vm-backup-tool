@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import tomllib
 from pathlib import Path
 
+import tomli_w
 from platformdirs import user_config_path
 
 from .models import AppConfig
@@ -24,3 +26,22 @@ def load_config(path: Path | None = None) -> AppConfig:
         data.setdefault("server", {})["password"] = password
     return AppConfig.model_validate(data)
 
+
+def resolve_config_path(path: Path | None = None) -> Path:
+    return path or Path(os.environ.get("ESXI_BACKUP_CONFIG", DEFAULT_CONFIG_PATH))
+
+
+def save_config(config: AppConfig, path: Path | None = None) -> Path:
+    """Atomically persist configuration while preserving a private file mode on POSIX."""
+    target = resolve_config_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = config.model_dump(mode="python")
+    data["server"]["password"] = config.server.password.get_secret_value()
+    with tempfile.NamedTemporaryFile(
+        mode="wb", dir=target.parent, prefix=f".{target.name}.", delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+        handle.write(tomli_w.dumps(data).encode("utf-8"))
+    temporary.chmod(0o600)
+    os.replace(temporary, target)
+    return target

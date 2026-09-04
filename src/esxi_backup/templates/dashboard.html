@@ -13,7 +13,7 @@
   </style>
 </head>
 <body><main>
-  <header><h1>ESXi VM Backup</h1><span class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups</span></header>
+  <header><h1>ESXi VM Backup</h1><span><a href="/settings">Settings</a> · <span class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups</span></span></header>
   {% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}
   <h2>Virtual machines</h2><table><thead><tr><th>VM</th><th>Power</th><th>Latest backup</th><th></th></tr></thead><tbody>
   {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td>{{ vm.power_state }}</td>
