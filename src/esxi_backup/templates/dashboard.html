@@ -14,9 +14,9 @@
   </style>
 </head>
 <body><main>
-  <header><h1>ESXi VM Backup</h1><span><a href="/" title="Refresh dashboard">Refresh</a> · <a href="/settings">Settings</a> · <span class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
-  {% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}
-  <h2>Virtual machines</h2><table><thead><tr><th>VM</th><th>Power</th><th>Latest backup</th><th>Schedule</th><th></th></tr></thead><tbody>
+  <header><h1>ESXi VM Backup</h1><span><a href="#" id="refresh" title="Refresh dashboard">Refresh</a> · <a href="/settings">Settings</a> · <span id="stats" class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
+  <div id="connection">{% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}</div>
+  <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th>VM</th><th>Power</th><th>Latest backup</th><th>Schedule</th><th></th></tr></thead><tbody>
   {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td>{{ vm.power_state }}</td>
     <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% if latest[vm.id].status == 'running' %}<br><small>{{ latest[vm.id].phase }} · {{ latest[vm.id].progress }}% · {{ '%.1f'|format(latest[vm.id].logical_bytes/1048576) }} MiB</small><div class="bar"><span style="width:{{ latest[vm.id].progress }}%"></span></div>{% endif %}{% if latest[vm.id].error %}<br><small class="error">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
     <td><form class="schedule" method="post" action="/vms/{{ vm.id }}/schedule"><input type="hidden" name="vm_name" value="{{ vm.name }}">
@@ -26,8 +26,8 @@
       <button>Save</button>{% if s and s.next_run_at %}<small>Next {{ s.next_run_at.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}</form></td>
     <td><form method="post" action="/vms/{{ vm.id }}/backups"><button>Back up now</button></form></td></tr>{% else %}<tr><td colspan="4">No VMs available.</td></tr>{% endfor %}
   </tbody></table>
-  <h2>Recent jobs</h2><table><thead><tr><th>Started</th><th>VM</th><th>Status</th><th>Logical</th><th>New data</th></tr></thead><tbody>
-  {% for b in backups %}<tr><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %} · {{ b.progress }}%<br><small>{{ b.phase }}{% if b.current_file %}: {{ b.current_file }}{% endif %}</small>{% endif %}{% if b.error %}<br><small>{{ b.error }}</small>{% endif %}</td><td>{{ '%.1f'|format(b.logical_bytes/1073741824) }} GiB</td><td>{{ '%.1f'|format(b.stored_bytes/1073741824) }} GiB</td></tr>{% else %}<tr><td colspan="5">No backups yet.</td></tr>{% endfor %}
+  <h2>Recent jobs</h2><table id="jobs-table"><thead><tr><th>Started</th><th>VM</th><th>Status</th><th>Logical</th><th>New data</th><th>OVA</th></tr></thead><tbody>
+  {% for b in backups %}<tr><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %} · {{ b.progress }}%<br><small>{{ b.phase }}{% if b.current_file %}: {{ b.current_file }}{% endif %}</small>{% endif %}{% if b.error %}<br><small>{{ b.error }}</small>{% endif %}</td><td>{{ '%.1f'|format(b.logical_bytes/1073741824) }} GiB</td><td>{{ '%.1f'|format(b.stored_bytes/1073741824) }} GiB</td><td>{% set ova = ova_exports.get(b.id) %}{% if ova and ova.status == 'running' %}<span class="running">Packaging {{ ova.progress }}%</span>{% elif ova and ova.status == 'success' %}<a href="/backups/{{ b.id }}/ova">Download OVA</a>{% elif b.id in ova_capable %}<form method="post" action="/backups/{{ b.id }}/ova"><button>Build OVA</button></form>{% else %}<small>Not available</small>{% endif %}{% if ova and ova.error %}<br><small class="error">{{ ova.error }}</small>{% endif %}</td></tr>{% else %}<tr><td colspan="6">No backups yet.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Configuration</h2><table><tbody>
     <tr><th>ESXi host</th><td>{{ config.server.host }}:{{ config.server.port }}</td><th>TLS verification</th><td>{{ config.server.verify_ssl }}</td></tr>
@@ -35,11 +35,48 @@
     <tr><th>Quiesced snapshots</th><td>{{ config.quiesce }}</td><th>Credential</th><td>Hidden</td></tr>
   </tbody></table>
   <script>
-    const hasRunningBackup = {{ 'true' if backups|selectattr('status', 'equalto', 'running')|list else 'false' }};
-    const loadedAt = new Date();
+    let loadedAt = new Date();
+    let refreshing = false;
+    async function refreshDashboard() {
+      if (refreshing || document.hidden) return;
+      refreshing = true;
+      try {
+        const response = await fetch('/', {headers: {'X-Requested-With': 'fetch'}});
+        const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+        for (const id of ['vm-table', 'jobs-table', 'connection']) {
+          const current = document.getElementById(id);
+          const replacement = next.getElementById(id);
+          if (current && replacement) current.replaceWith(replacement);
+        }
+        const nextStats = next.getElementById('stats');
+        if (nextStats) document.getElementById('stats').childNodes[0].textContent =
+          nextStats.textContent.replace(/updated.*$/, 'updated ');
+        loadedAt = new Date();
+      } catch (error) {
+        document.getElementById('updated').textContent = 'refresh failed';
+      } finally { refreshing = false; }
+    }
+    document.addEventListener('submit', async event => {
+      const form = event.target;
+      if (!form.closest('#vm-table') && !form.closest('#jobs-table')) return;
+      event.preventDefault();
+      const button = form.querySelector('button');
+      if (button) { button.disabled = true; button.textContent = 'Working…'; }
+      try {
+        const response = await fetch(form.action, {method: form.method, body: new FormData(form)});
+        if (!response.ok) throw new Error((await response.text()) || response.statusText);
+        await refreshDashboard();
+      } catch (error) {
+        alert('Action failed: ' + error.message);
+        if (button) { button.disabled = false; button.textContent = 'Retry'; }
+      }
+    });
+    document.getElementById('refresh').addEventListener('click', event => {
+      event.preventDefault(); refreshDashboard();
+    });
     setInterval(() => {
       document.getElementById('updated').textContent = Math.max(1, Math.round((new Date() - loadedAt) / 1000)) + 's ago';
     }, 1000);
-    if (hasRunningBackup) setTimeout(() => location.reload(), 3000);
+    setInterval(refreshDashboard, 3000);
   </script>
 </main></body></html>

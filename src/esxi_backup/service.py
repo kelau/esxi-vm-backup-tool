@@ -4,7 +4,7 @@ import io
 import json
 import tarfile
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .esxi import EsxiClient
 from .models import AppConfig, BackupRecord, BackupStatus, VMInfo
@@ -164,14 +164,39 @@ class BackupService:
                 ovf_info.size = len(descriptor_bytes)
                 ovf_info.mtime = 0
                 archive.addfile(ovf_info, io.BytesIO(descriptor_bytes))
+                total = sum(int(file["size"]) for file in manifest["files"]) or 1
+                written = 0
                 for file in manifest["files"]:
-                    info = tarfile.TarInfo(str(file["name"]))
+                    member_name = str(file["name"])
+                    if PurePosixPath(member_name).name != member_name:
+                        raise ValueError(f"Unsafe OVA member name: {member_name}")
+                    info = tarfile.TarInfo(member_name)
                     info.size = int(file["size"])
                     info.mtime = 0
                     with self.repository.open_chunk_stream(file["chunks"]) as stream:
                         archive.addfile(info, stream)
+                    written += int(file["size"])
+                    self.repository.update_ova_export(
+                        backup_id, int(written * 100 / total)
+                    )
             temporary.replace(destination)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
         return destination
+
+    def export_ova_for_web(self, backup_id: str) -> None:
+        self.repository.start_ova_export(backup_id)
+        destination = self.repository.root / "exports" / f"{backup_id}.ova"
+        try:
+            output = self.export_ova(backup_id, destination)
+            self.repository.finish_ova_export(backup_id, output)
+        except Exception as exc:
+            self.repository.fail_ova_export(backup_id, str(exc))
+            raise
+
+    def supports_ova(self, backup_id: str) -> bool:
+        path = self.repository.manifests / f"{backup_id}.json"
+        if not path.exists():
+            return False
+        return bool(json.loads(path.read_text(encoding="utf-8")).get("ovf_descriptor"))

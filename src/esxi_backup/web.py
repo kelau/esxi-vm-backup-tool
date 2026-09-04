@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from .config import load_config, resolve_config_path, save_config
@@ -39,11 +39,19 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         for backup in backups:
             latest.setdefault(backup.vm_id, backup)
         schedules = {item.vm_id: item for item in app.state.scheduler.schedules()}
+        ova_exports = {
+            item.backup_id: item for item in app.state.service.repository.list_ova_exports()
+        }
+        ova_capable = {
+            backup.id for backup in backups if app.state.service.supports_ova(backup.id)
+        }
         return templates.TemplateResponse(request, "dashboard.html", {
             "vms": vms, "backups": backups[:25], "latest": latest,
             "connection_error": connection_error,
             "config": app.state.service.config,
             "schedules": schedules,
+            "ova_exports": ova_exports,
+            "ova_capable": ova_capable,
         })
 
     @app.get("/api/v1/vms")
@@ -53,6 +61,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/backups")
     def api_backups():
         return app.state.service.repository.list()
+
+    @app.get("/api/v1/ova-exports")
+    def api_ova_exports():
+        return app.state.service.repository.list_ova_exports()
 
     @app.get("/api/v1/schedules")
     def api_schedules():
@@ -146,6 +158,28 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def html_backup(vm_id: str, tasks: BackgroundTasks):
         tasks.add_task(app.state.service.backup, vm_id)
         return RedirectResponse("/", status_code=303)
+
+    @app.post("/backups/{backup_id}/ova")
+    def build_ova(backup_id: str, tasks: BackgroundTasks):
+        if not app.state.service.supports_ova(backup_id):
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "Recovery point has no OVF descriptor"},
+            )
+        app.state.service.repository.start_ova_export(backup_id)
+        tasks.add_task(app.state.service.export_ova_for_web, backup_id)
+        return RedirectResponse("/", status_code=303)
+
+    @app.get("/backups/{backup_id}/ova")
+    def download_ova(backup_id: str):
+        export = app.state.service.repository.get_ova_export(backup_id)
+        if not export or export.status != "success" or not export.path:
+            return JSONResponse(status_code=404, content={"detail": "OVA not available"})
+        path = Path(export.path).resolve()
+        exports_root = (app.state.service.repository.root / "exports").resolve()
+        if exports_root not in path.parents or not path.is_file():
+            return JSONResponse(status_code=404, content={"detail": "OVA not available"})
+        return FileResponse(path, filename=path.name, media_type="application/x-virtualization-ova")
 
     @app.exception_handler(LookupError)
     def not_found(_request: Request, exc: LookupError):

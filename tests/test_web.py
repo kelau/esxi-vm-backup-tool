@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from esxi_backup.models import AppConfig, ServerConfig, VMInfo
+from esxi_backup.models import AppConfig, BackupRecord, BackupStatus, ServerConfig, VMInfo
 from esxi_backup.service import BackupService
 from esxi_backup.web import create_app
 
@@ -33,7 +33,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "demo" in response.text
     assert "esxi.test" in response.text
-    assert "hasRunningBackup" in response.text
+    assert "refreshDashboard" in response.text
 
 
 def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
@@ -56,3 +56,29 @@ def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
     saved = config_path.read_text(encoding="utf-8")
     assert 'host = "new.test"' in saved
     assert 'password = "secret"' in saved
+
+
+def test_web_can_build_and_download_ova(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    service.repository.create(BackupRecord(
+        id="backup-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.SUCCESS,
+    ))
+    service.repository.write_manifest("backup-1", {
+        "format": 1, "backup_id": "backup-1", "vm_id": "vm-1", "vm_name": "demo",
+        "ovf_descriptor": "<Envelope/>", "files": [],
+    })
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    with TestClient(create_app()) as client:
+        response = client.post("/backups/backup-1/ova", follow_redirects=False)
+        download = client.get("/backups/backup-1/ova")
+
+    assert response.status_code == 303
+    assert service.repository.get_ova_export("backup-1").status == "success"
+    assert download.status_code == 200
+    assert download.headers["content-type"] == "application/x-virtualization-ova"

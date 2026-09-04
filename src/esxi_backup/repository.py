@@ -13,7 +13,7 @@ from typing import BinaryIO
 
 import zstandard
 
-from .models import BackupRecord, BackupSchedule, BackupStatus
+from .models import BackupRecord, BackupSchedule, BackupStatus, OvaExportRecord
 
 
 class ChunkStream(io.RawIOBase):
@@ -71,6 +71,11 @@ class BackupRepository:
                 vm_id TEXT PRIMARY KEY, vm_name TEXT NOT NULL,
                 frequency TEXT NOT NULL, hour INTEGER NOT NULL,
                 minute INTEGER NOT NULL, weekday INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS ova_exports (
+                backup_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+                progress INTEGER NOT NULL DEFAULT 0, path TEXT, error TEXT,
+                started_at TEXT NOT NULL, finished_at TEXT
             );
         """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(backups)")}
@@ -205,3 +210,46 @@ class BackupRepository:
     def get_schedule(self, vm_id: str) -> BackupSchedule | None:
         row = self.db.execute("SELECT * FROM schedules WHERE vm_id=?", (vm_id,)).fetchone()
         return BackupSchedule.model_validate(dict(row)) if row else None
+
+    def start_ova_export(self, backup_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """INSERT INTO ova_exports(backup_id,status,progress,started_at)
+               VALUES(?,?,0,?) ON CONFLICT(backup_id) DO UPDATE SET
+               status=excluded.status,progress=0,path=NULL,error=NULL,
+               started_at=excluded.started_at,finished_at=NULL""",
+            (backup_id, BackupStatus.RUNNING, now),
+        )
+        self.db.commit()
+
+    def update_ova_export(self, backup_id: str, progress: int) -> None:
+        self.db.execute(
+            "UPDATE ova_exports SET progress=? WHERE backup_id=?",
+            (max(0, min(99, progress)), backup_id),
+        )
+        self.db.commit()
+
+    def finish_ova_export(self, backup_id: str, path: Path) -> None:
+        self.db.execute(
+            """UPDATE ova_exports SET status=?,progress=100,path=?,finished_at=?
+               WHERE backup_id=?""",
+            (BackupStatus.SUCCESS, str(path), datetime.now(UTC).isoformat(), backup_id),
+        )
+        self.db.commit()
+
+    def fail_ova_export(self, backup_id: str, error: str) -> None:
+        self.db.execute(
+            """UPDATE ova_exports SET status=?,error=?,finished_at=? WHERE backup_id=?""",
+            (BackupStatus.FAILED, error, datetime.now(UTC).isoformat(), backup_id),
+        )
+        self.db.commit()
+
+    def list_ova_exports(self) -> list[OvaExportRecord]:
+        rows = self.db.execute("SELECT * FROM ova_exports").fetchall()
+        return [OvaExportRecord.model_validate(dict(row)) for row in rows]
+
+    def get_ova_export(self, backup_id: str) -> OvaExportRecord | None:
+        row = self.db.execute(
+            "SELECT * FROM ova_exports WHERE backup_id=?", (backup_id,)
+        ).fetchone()
+        return OvaExportRecord.model_validate(dict(row)) if row else None

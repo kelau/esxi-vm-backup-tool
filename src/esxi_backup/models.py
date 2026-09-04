@@ -68,3 +68,13 @@ class BackupSchedule(BaseModel):
     minute: Annotated[int, Field(ge=0, le=59)] = 0
     weekday: Annotated[int, Field(ge=0, le=6)] = 0
     next_run_at: datetime | None = None
+
+
+class OvaExportRecord(BaseModel):
+    backup_id: str
+    status: BackupStatus
+    progress: Annotated[int, Field(ge=0, le=100)] = 0
+    path: str | None = None
+    error: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
