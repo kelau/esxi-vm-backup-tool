@@ -60,14 +60,22 @@ class EsxiClient:
             view.Destroy()
 
     def list_vms(self) -> list[VMInfo]:
-        return [VMInfo(
-            id=vm._moId, name=vm.name, power_state=str(vm.runtime.powerState),
-            guest_os=getattr(vm.config, "guestFullName", None),
-            provisioned_bytes=sum(
-                getattr(device, "capacityInBytes", 0)
-                for device in vm.config.hardware.device
-            ),
-        ) for vm in self._vms()]
+        inventory = []
+        for vm in self._vms():
+            config = getattr(vm, "config", None)
+            hardware = getattr(config, "hardware", None)
+            devices = getattr(hardware, "device", None) or []
+            runtime = getattr(vm, "runtime", None)
+            inventory.append(VMInfo(
+                id=vm._moId,
+                name=getattr(vm, "name", vm._moId),
+                power_state=str(getattr(runtime, "powerState", "unknown")),
+                guest_os=getattr(config, "guestFullName", None),
+                provisioned_bytes=sum(
+                    getattr(device, "capacityInBytes", 0) for device in devices
+                ),
+            ))
+        return inventory
 
     def find_vm(self, identity: str):
         for vm in self._vms():
