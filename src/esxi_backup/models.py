@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, SecretStr
 
@@ -56,3 +56,12 @@ class BackupRecord(BaseModel):
     stored_bytes: int = 0
     error: str | None = None
 
+
+class BackupSchedule(BaseModel):
+    vm_id: str
+    vm_name: str
+    frequency: Literal["disabled", "daily", "weekly"] = "disabled"
+    hour: Annotated[int, Field(ge=0, le=23)] = 2
+    minute: Annotated[int, Field(ge=0, le=59)] = 0
+    weekday: Annotated[int, Field(ge=0, le=6)] = 0
+    next_run_at: datetime | None = None

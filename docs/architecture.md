@@ -12,6 +12,10 @@ EsxiClient   BackupRepository
 (pyVmomi)    (SQLite + zstd chunks + JSON manifests)
 ```
 
+The web service also owns a single APScheduler instance. Per-VM daily or weekly definitions are
+stored in SQLite and rebuilt at startup. Jobs coalesce missed runs and allow only one running
+instance per VM.
+
 ## Storage layout
 
 ```text
@@ -41,4 +45,3 @@ the scheduler, limiting ESXi snapshot and datastore pressure.
 - Native OVF upload restore workflow
 - Per-VM schedules, notifications, and job cancellation
 - Metrics and snapshot-age watchdog
-

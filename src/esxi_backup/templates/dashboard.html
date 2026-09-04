@@ -9,15 +9,21 @@
     header{display:flex;justify-content:space-between;align-items:center}h1{font-size:24px}h2{font-size:17px;margin-top:32px}
     .stats{color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:10px;overflow:hidden}
     th,td{text-align:left;padding:12px;border-bottom:1px solid #26304a}th{color:var(--muted);font-weight:500}.ok{color:var(--accent)}
+    select,input{background:#0c1324;color:#eef3ff;border:1px solid #34415f;border-radius:5px;padding:6px}.schedule{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.schedule input{width:36px}.schedule small{flex-basis:100%;color:var(--muted)}
     .failed,.error{color:var(--bad)}button{background:var(--accent);border:0;padding:8px 12px;border-radius:6px;color:#08140f;cursor:pointer}
   </style>
 </head>
 <body><main>
   <header><h1>ESXi VM Backup</h1><span><a href="/settings">Settings</a> · <span class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups</span></span></header>
   {% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}
-  <h2>Virtual machines</h2><table><thead><tr><th>VM</th><th>Power</th><th>Latest backup</th><th></th></tr></thead><tbody>
+  <h2>Virtual machines</h2><table><thead><tr><th>VM</th><th>Power</th><th>Latest backup</th><th>Schedule</th><th></th></tr></thead><tbody>
   {% for vm in vms %}<tr><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td><td>{{ vm.power_state }}</td>
     <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% else %}Never{% endif %}</td>
+    <td><form class="schedule" method="post" action="/vms/{{ vm.id }}/schedule"><input type="hidden" name="vm_name" value="{{ vm.name }}">
+      {% set s = schedules.get(vm.id) %}<select name="frequency"><option value="disabled" {% if not s or s.frequency == 'disabled' %}selected{% endif %}>Off</option><option value="daily" {% if s and s.frequency == 'daily' %}selected{% endif %}>Daily</option><option value="weekly" {% if s and s.frequency == 'weekly' %}selected{% endif %}>Weekly</option></select>
+      <input aria-label="Hour" name="hour" type="number" min="0" max="23" value="{{ s.hour if s else 2 }}"><span>:</span><input aria-label="Minute" name="minute" type="number" min="0" max="59" value="{{ s.minute if s else 0 }}">
+      <select aria-label="Weekday" name="weekday"><option value="0" {% if s and s.weekday == 0 %}selected{% endif %}>Mon</option><option value="1" {% if s and s.weekday == 1 %}selected{% endif %}>Tue</option><option value="2" {% if s and s.weekday == 2 %}selected{% endif %}>Wed</option><option value="3" {% if s and s.weekday == 3 %}selected{% endif %}>Thu</option><option value="4" {% if s and s.weekday == 4 %}selected{% endif %}>Fri</option><option value="5" {% if s and s.weekday == 5 %}selected{% endif %}>Sat</option><option value="6" {% if s and s.weekday == 6 %}selected{% endif %}>Sun</option></select>
+      <button>Save</button>{% if s and s.next_run_at %}<small>Next {{ s.next_run_at.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}</form></td>
     <td><form method="post" action="/vms/{{ vm.id }}/backups"><button>Back up now</button></form></td></tr>{% else %}<tr><td colspan="4">No VMs available.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Recent jobs</h2><table><thead><tr><th>Started</th><th>VM</th><th>Status</th><th>Logical</th><th>New data</th></tr></thead><tbody>

@@ -12,7 +12,7 @@ from typing import BinaryIO
 
 import zstandard
 
-from .models import BackupRecord, BackupStatus
+from .models import BackupRecord, BackupSchedule, BackupStatus
 
 
 class BackupRepository:
@@ -42,6 +42,11 @@ class BackupRepository:
                 stored_bytes INTEGER NOT NULL DEFAULT 0, error TEXT
             );
             CREATE INDEX IF NOT EXISTS backups_vm ON backups(vm_id, started_at DESC);
+            CREATE TABLE IF NOT EXISTS schedules (
+                vm_id TEXT PRIMARY KEY, vm_name TEXT NOT NULL,
+                frequency TEXT NOT NULL, hour INTEGER NOT NULL,
+                minute INTEGER NOT NULL, weekday INTEGER NOT NULL DEFAULT 0
+            );
         """)
         self.db.commit()
 
@@ -106,3 +111,22 @@ class BackupRepository:
             if hashlib.sha256(data).hexdigest() != digest:
                 raise OSError(f"Chunk integrity failure: {digest}")
             output.write(data)
+
+    def save_schedule(self, schedule: BackupSchedule) -> None:
+        self.db.execute(
+            """INSERT INTO schedules(vm_id,vm_name,frequency,hour,minute,weekday)
+               VALUES(?,?,?,?,?,?) ON CONFLICT(vm_id) DO UPDATE SET
+               vm_name=excluded.vm_name,frequency=excluded.frequency,
+               hour=excluded.hour,minute=excluded.minute,weekday=excluded.weekday""",
+            (schedule.vm_id, schedule.vm_name, schedule.frequency, schedule.hour,
+             schedule.minute, schedule.weekday),
+        )
+        self.db.commit()
+
+    def list_schedules(self) -> list[BackupSchedule]:
+        rows = self.db.execute("SELECT * FROM schedules ORDER BY vm_name").fetchall()
+        return [BackupSchedule.model_validate(dict(row)) for row in rows]
+
+    def get_schedule(self, vm_id: str) -> BackupSchedule | None:
+        row = self.db.execute("SELECT * FROM schedules WHERE vm_id=?", (vm_id,)).fetchone()
+        return BackupSchedule.model_validate(dict(row)) if row else None
