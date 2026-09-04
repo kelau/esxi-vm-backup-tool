@@ -27,7 +27,9 @@ class BackupRepository:
         self.decompressor = zstandard.ZstdDecompressor()
         self.chunks.mkdir(parents=True, exist_ok=True)
         self.manifests.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.root / "catalog.sqlite3")
+        # FastAPI executes synchronous routes in worker threads. SQLite serializes writes,
+        # and this connection must therefore be allowed to follow the service across them.
+        self.db = sqlite3.connect(self.root / "catalog.sqlite3", check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self._migrate()
 
