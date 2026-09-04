@@ -92,9 +92,11 @@ transaction-level guarantees.
 
 ## Restore
 
-`esxi-backup restore` reconstructs the exported OVF/VMDK files and verifies every chunk hash. Import
-the resulting OVF into ESXi/vCenter using the vSphere Client or `ovftool`. Restoration never writes
-to ESXi automatically, reducing the risk of overwriting a running VM.
+`esxi-backup restore` reconstructs the exported VMDK and NVRAM files and verifies every chunk hash.
+This release does not yet capture an OVF descriptor: create a replacement VM with matching firmware,
+guest OS, CPU, memory, and controller type, upload `disk-01.vmdk` to its datastore directory, and
+attach it as an existing disk. Restoration never writes to ESXi automatically, reducing the risk of
+overwriting a running VM. Native OVF capture/import is on the roadmap.
 
 ## Development
 

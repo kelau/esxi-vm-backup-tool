@@ -73,3 +73,21 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
 def test_list_vms(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     assert service.list_vms()[0].name == "mail"
+
+
+def test_restore_maps_esxi_device_keys_to_portable_names(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    disk_chunks, _, _ = service.repository.store_stream(BytesIO(b"disk-data"))
+    nvram_chunks, _, _ = service.repository.store_stream(BytesIO(b"nvram-data"))
+    service.repository.write_manifest("restore-me", {
+        "format": 1, "backup_id": "restore-me", "vm_id": "vm-42", "vm_name": "mail",
+        "files": [
+            {"name": "/10/ParaVirtualSCSIController0:0", "chunks": disk_chunks},
+            {"name": "/10/nvram", "chunks": nvram_chunks},
+        ],
+    })
+
+    outputs = service.restore("restore-me", tmp_path / "output")
+
+    assert [path.name for path in outputs] == ["disk-01.vmdk", "vm.nvram"]
+    assert outputs[0].read_bytes() == b"disk-data"

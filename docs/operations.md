@@ -32,3 +32,6 @@ At least quarterly, restore the newest recovery point to a staging datastore, im
 new name on an isolated network, boot it, and perform application-level validation. A successful
 backup job alone does not prove recoverability.
 
+For format version 1, run `esxi-backup restore BACKUP_ID DESTINATION`, create a replacement VM with
+matching firmware and virtual disk-controller type, upload the reconstructed VMDK, and attach it as
+an existing disk. Keep the original VM powered off but intact until validation succeeds.

@@ -111,8 +111,14 @@ class BackupService:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         destination.mkdir(parents=True, exist_ok=True)
         outputs = []
-        for file in manifest["files"]:
-            safe_name = Path(file["name"]).name
+        for index, file in enumerate(manifest["files"], start=1):
+            raw_name = str(file["name"]).lower()
+            if "nvram" in raw_name:
+                safe_name = "vm.nvram"
+            elif any(kind in raw_name for kind in ("scsi", "sata", "ide", "vmdk")):
+                safe_name = f"disk-{index:02d}.vmdk"
+            else:
+                safe_name = f"artifact-{index:02d}.bin"
             target = destination / safe_name
             with target.open("wb") as output:
                 self.repository.restore_stream(file["chunks"], output)
