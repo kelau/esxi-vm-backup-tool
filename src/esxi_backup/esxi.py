@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from pyVim.connect import Disconnect, SmartConnect
@@ -167,8 +167,16 @@ class EsxiClient:
         if not self.config.verify_ssl:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-        request = Request(url, headers={"Cookie": self.si._stub.cookie})
+        request = Request(self._safe_url(url), headers={"Cookie": self.si._stub.cookie})
         return urlopen(request, context=context, timeout=300)
+
+    @staticmethod
+    def _safe_url(url: str) -> str:
+        parsed = urlsplit(url)
+        return urlunsplit((
+            parsed.scheme, parsed.netloc, quote(parsed.path, safe="/%:@"),
+            parsed.query, parsed.fragment,
+        ))
 
     def create_ovf_descriptor(self, vm, files: list[ExportFile]) -> str:
         params = vim.OvfManager.CreateDescriptorParams(
@@ -242,7 +250,7 @@ class EsxiClient:
             raise
 
     def _upload(self, url: str, chunks, size: int, on_bytes=None) -> int:
-        parsed = urlsplit(url)
+        parsed = urlsplit(self._safe_url(url))
         context = ssl.create_default_context()
         if not self.config.verify_ssl:
             context.check_hostname = False

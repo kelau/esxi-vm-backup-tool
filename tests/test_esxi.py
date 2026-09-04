@@ -32,3 +32,10 @@ def test_ovf_descriptor_explicitly_excludes_iso_images():
 
     assert descriptor == "<Envelope/>"
     assert captured["params"].includeImageFiles is False
+
+
+def test_nfc_urls_with_vm_name_spaces_are_encoded():
+    url = "https://esxi/ha-nfc/id/Usenet Indexers.nvram?token=a%20b"
+    assert EsxiClient._safe_url(url) == (
+        "https://esxi/ha-nfc/id/Usenet%20Indexers.nvram?token=a%20b"
+    )
