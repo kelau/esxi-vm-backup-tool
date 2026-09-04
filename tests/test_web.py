@@ -74,7 +74,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Hide failed" in response.text
     assert "hideFailedJobs" in response.text
     assert "bar.indeterminate" in response.text
-    assert "2.00 GiB" in response.text
+    assert "2 GiB" in response.text
     assert "Live on ESXi" in response.text
     assert "Backup only" in response.text
     assert "deleted-demo" in response.text
@@ -82,6 +82,9 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Remove all backups" in response.text
     assert "Build OVA" in response.text
     assert "Restore to ESXi" in response.text
+    assert "localizeTimes" in response.text
+    assert "applyVmSort" in response.text
+    assert 'data-sort="backupSize"' in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):

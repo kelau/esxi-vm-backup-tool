@@ -112,6 +112,7 @@ class BackupRepository:
             "phase": "TEXT NOT NULL DEFAULT 'queued'",
             "current_file": "TEXT",
             "virtual_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "repository_bytes": "INTEGER NOT NULL DEFAULT 0",
             "throughput_mib_s": "REAL NOT NULL DEFAULT 0",
         }.items():
             if name not in columns:
@@ -142,6 +143,34 @@ class BackupRepository:
         )
         self.db.commit()
         self._backfill_repository_index()
+        self._backfill_backup_sizes()
+
+    @synchronized_db
+    def _backfill_backup_sizes(self) -> None:
+        sizes = {
+            row["sha256"]: int(row["stored_size"])
+            for row in self.db.execute("SELECT sha256,stored_size FROM chunk_index")
+        }
+        for row in self.db.execute(
+            "SELECT id FROM backups WHERE repository_bytes=0 AND status='success'"
+        ).fetchall():
+            manifest_path = self.manifests / f"{row['id']}.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                digests = {
+                    str(chunk["sha256"])
+                    for file in manifest.get("files", [])
+                    for chunk in file.get("chunks", [])
+                }
+            except (OSError, ValueError, KeyError):
+                continue
+            self.db.execute(
+                "UPDATE backups SET repository_bytes=? WHERE id=?",
+                (sum(sizes.get(digest, 0) for digest in digests), row["id"]),
+            )
+        self.db.commit()
 
     @synchronized_db
     def _backfill_repository_index(self) -> None:
@@ -192,9 +221,11 @@ class BackupRepository:
         self.db.execute(
             """INSERT INTO backups
                (id,vm_id,vm_name,status,started_at,finished_at,logical_bytes,
-                stored_bytes,virtual_bytes,throughput_mib_s,progress,phase,current_file,error)
+                stored_bytes,repository_bytes,virtual_bytes,throughput_mib_s,
+                progress,phase,current_file,error)
                VALUES (:id,:vm_id,:vm_name,:status,:started_at,:finished_at,
-                :logical_bytes,:stored_bytes,:virtual_bytes,:throughput_mib_s,
+                :logical_bytes,:stored_bytes,:repository_bytes,:virtual_bytes,
+                :throughput_mib_s,
                 :progress,:phase,
                 :current_file,:error)""",
             values,
@@ -203,13 +234,15 @@ class BackupRepository:
 
     @synchronized_db
     def finish(
-        self, backup_id: str, *, logical: int, stored: int, virtual: int = 0
+        self, backup_id: str, *, logical: int, stored: int,
+        repository_bytes: int = 0, virtual: int = 0,
     ) -> None:
         self.db.execute(
             """UPDATE backups SET status=?,finished_at=?,logical_bytes=?,stored_bytes=?,
-               virtual_bytes=?,progress=100,phase='complete',current_file=NULL WHERE id=?""",
+               repository_bytes=?,virtual_bytes=?,progress=100,phase='complete',
+               current_file=NULL WHERE id=?""",
             (BackupStatus.SUCCESS, datetime.now(UTC).isoformat(), logical, stored,
-             virtual, backup_id),
+             repository_bytes, virtual, backup_id),
         )
         self.db.commit()
 
@@ -247,7 +280,8 @@ class BackupRepository:
         # Catalogs created by older versions can contain NULL in columns added
         # later. Normalize defensively even if a migration was interrupted.
         for field, default in {
-            "logical_bytes": 0, "stored_bytes": 0, "virtual_bytes": 0,
+            "logical_bytes": 0, "stored_bytes": 0, "repository_bytes": 0,
+            "virtual_bytes": 0,
             "throughput_mib_s": 0.0, "progress": 0, "phase": "queued",
         }.items():
             if values.get(field) is None:
@@ -311,7 +345,10 @@ class BackupRepository:
                         (digest, data_size, target.stat().st_size),
                     )
             logical += data_size
-            manifest.append({"sha256": digest, "size": data_size})
+            manifest.append({
+                "sha256": digest, "size": data_size,
+                "stored_size": target.stat().st_size,
+            })
             if on_bytes:
                 on_bytes(data_size)
 

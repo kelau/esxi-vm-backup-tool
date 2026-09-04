@@ -1,4 +1,4 @@
-{% macro bytes(value) -%}{% if value >= 1099511627776 %}{{ '%.2f'|format(value/1099511627776) }} TiB{% elif value >= 1073741824 %}{{ '%.2f'|format(value/1073741824) }} GiB{% elif value >= 1048576 %}{{ '%.1f'|format(value/1048576) }} MiB{% elif value >= 1024 %}{{ '%.1f'|format(value/1024) }} KiB{% else %}{{ value }} B{% endif %}{%- endmacro %}
+{% macro bytes(value) -%}{% if value >= 1099511627776 %}{{ '%.0f'|format(value/1099511627776) }} TiB{% elif value >= 1073741824 %}{{ '%.0f'|format(value/1073741824) }} GiB{% elif value >= 1048576 %}{{ '%.1f'|format(value/1048576) }} MiB{% elif value >= 1024 %}{{ '%.1f'|format(value/1024) }} KiB{% else %}{{ value }} B{% endif %}{%- endmacro %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -17,6 +17,7 @@
     .repo-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:22px 0}.repo-card{background:var(--panel);border-radius:9px;padding:14px 16px}.repo-card small{display:block;color:var(--muted);margin-bottom:5px}.repo-card strong{font-size:19px}@media(max-width:700px){.repo-summary{grid-template-columns:1fr 1fr}}
     .section-heading{display:flex;align-items:center;justify-content:space-between}.job-filter{font-size:14px;font-weight:400;color:var(--muted);display:flex;align-items:center;gap:7px}.job-filter input{accent-color:var(--accent)}
     .state{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;white-space:nowrap}.state.live{color:#8af0cc;background:#173a31}.state.backup-only{color:#c2cbe0;background:#26304a}
+    th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:#eef3ff}th.sortable::after{content:' ↕';opacity:.45}th.sortable[aria-sort='ascending']::after{content:' ↑';opacity:1}th.sortable[aria-sort='descending']::after{content:' ↓';opacity:1}
     .failed,.error{color:var(--bad)}.error-brief{display:inline-block;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;cursor:help}button{background:var(--accent);border:0;padding:8px 12px;border-radius:6px;color:#08140f;cursor:pointer}.bar{width:130px;height:6px;background:#26304a;border-radius:4px;overflow:hidden;margin-top:5px}.bar span{display:block;height:100%;background:var(--accent)}.bar.indeterminate span{width:35%;animation:transfer 1.2s ease-in-out infinite}@keyframes transfer{from{transform:translateX(-100%)}to{transform:translateX(385%)}}
   </style>
 </head>
@@ -24,13 +25,13 @@
   <header><h1>ESXi VM Backup</h1><span><a href="#" id="refresh" title="Refresh dashboard">Refresh</a> · <a href="/settings">Settings</a> · <span id="stats" class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
   <div id="connection">{% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}</div>
   <section id="repo-summary" class="repo-summary"><div class="repo-card"><small>Total repository</small><strong>{{ bytes(repository_stats.total_bytes) }}</strong></div><div class="repo-card"><small>Deduplicated chunks</small><strong>{{ bytes(repository_stats.chunk_bytes) }}</strong></div><div class="repo-card"><small>OVA exports</small><strong>{{ bytes(repository_stats.ova_bytes) }}</strong></div><div class="repo-card"><small>Recovery points</small><strong>{{ repository_stats.recovery_points }}</strong></div></section>
-  <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th>VM</th><th>State</th><th>Power</th><th>VM size</th><th>Latest backup</th><th>Backup size</th><th></th></tr></thead><tbody>
-  {% for vm in vms %}<tr class="vm-row" data-vm-id="{{ vm.id }}" data-vm-state="{{ vm_states[vm.id] }}"><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td>
+  <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th class="sortable" data-sort="name">VM</th><th class="sortable" data-sort="state">State</th><th class="sortable" data-sort="power">Power</th><th class="sortable" data-sort="size">VM size</th><th class="sortable" data-sort="backup">Latest backup</th><th class="sortable" data-sort="backupSize">Backup size</th><th></th></tr></thead><tbody>
+  {% for vm in vms %}<tr class="vm-row" data-vm-id="{{ vm.id }}" data-vm-state="{{ vm_states[vm.id] }}" data-sort-name="{{ vm.name|lower }}" data-sort-state="{{ vm_states[vm.id] }}" data-sort-power="{{ vm.power_state }}" data-sort-size="{{ vm.provisioned_bytes }}" data-sort-backup="{{ latest[vm.id].started_at.isoformat() if vm.id in latest else '' }}" data-sort-backup-size="{{ latest[vm.id].repository_bytes if vm.id in latest else 0 }}"><td>{{ vm.name }}<br><small>{{ vm.guest_os or vm.id }}</small></td>
     <td><span class="state {% if vm_states[vm.id] == 'live' %}live{% else %}backup-only{% endif %}">{% if vm_states[vm.id] == 'live' %}Live on ESXi{% else %}Backup only{% endif %}</span></td>
     <td>{% if vm_states[vm.id] == 'live' %}<span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span></span>{% else %}<span class="muted">—</span>{% endif %}</td>
-    <td class="size">{% if vm.provisioned_bytes %}{{ '%.1f'|format(vm.provisioned_bytes/1073741824) }} GiB{% else %}<span class="muted">Unknown</span>{% endif %}</td>
-    <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · {{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}{% if latest[vm.id].status == 'running' %}<br><small>{{ latest[vm.id].phase }}{% if 'size unavailable' not in latest[vm.id].phase %} · {{ latest[vm.id].progress }}%{% endif %} · {{ bytes(latest[vm.id].logical_bytes) }}{% if latest[vm.id].throughput_mib_s %} · {{ '%.1f'|format(latest[vm.id].throughput_mib_s) }} MiB/s{% endif %}</small><div class="bar{% if 'size unavailable' in latest[vm.id].phase %} indeterminate{% endif %}"><span{% if 'size unavailable' not in latest[vm.id].phase %} style="width:{{ latest[vm.id].progress }}%"{% endif %}></span></div>{% endif %}{% if latest[vm.id].error %}<br><small class="error error-brief" title="{{ latest[vm.id].error }}">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
-    <td class="size">{% if vm.id in latest and latest[vm.id].status == 'success' %}{% set size = latest[vm.id].stored_bytes %}{% if size >= 1073741824 %}{{ '%.2f'|format(size/1073741824) }} GiB{% elif size >= 1048576 %}{{ '%.1f'|format(size/1048576) }} MiB{% else %}{{ '%.1f'|format(size/1024) }} KiB{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td class="size">{% if vm.provisioned_bytes %}{{ bytes(vm.provisioned_bytes) }}{% else %}<span class="muted">Unknown</span>{% endif %}</td>
+    <td>{% if vm.id in latest %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span> · <time class="local-time" datetime="{{ latest[vm.id].started_at.isoformat() }}">{{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}</time>{% if latest[vm.id].status == 'running' %}<br><small>{{ latest[vm.id].phase|replace(' (size unavailable)', '') }}{% if 'size unavailable' not in latest[vm.id].phase %} · {{ latest[vm.id].progress }}%{% endif %} · {{ bytes(latest[vm.id].logical_bytes) }}{% if latest[vm.id].throughput_mib_s %} · {{ '%.1f'|format(latest[vm.id].throughput_mib_s) }} MiB/s{% endif %}</small><div class="bar{% if 'size unavailable' in latest[vm.id].phase %} indeterminate{% endif %}"><span{% if 'size unavailable' not in latest[vm.id].phase %} style="width:{{ latest[vm.id].progress }}%"{% endif %}></span></div>{% endif %}{% if latest[vm.id].error %}<br><small class="error error-brief" title="{{ latest[vm.id].error }}">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
+    <td class="size">{% if vm.id in latest and latest[vm.id].status == 'success' %}{{ bytes(latest[vm.id].repository_bytes) }}{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="actions-cell"><details class="actions"><summary aria-label="Actions for {{ vm.name }}" title="Actions">⋮</summary><div class="actions-menu">
       {% if vm_states[vm.id] == 'live' %}<h3>Backup</h3>{% if vm.id in latest and latest[vm.id].status == 'running' %}<form class="cancel-backup" method="post" action="/backups/{{ latest[vm.id].id }}/cancel"><button>Cancel active backup</button></form>{% else %}<form method="post" action="/vms/{{ vm.id }}/backups"><button class="backup-now">Back up now</button></form>{% endif %}
       <h3>Schedule</h3><form class="schedule" method="post" action="/vms/{{ vm.id }}/schedule"><input type="hidden" name="vm_name" value="{{ vm.name }}">
@@ -43,7 +44,7 @@
     </div></details></td></tr>{% else %}<tr><td colspan="7">No VMs or recovery points available.</td></tr>{% endfor %}
   </tbody></table>
   <div class="section-heading"><h2>Recent jobs</h2><label class="job-filter"><input id="hide-failed-jobs" type="checkbox"> Hide failed</label></div><table id="jobs-table"><thead><tr><th>Started</th><th>VM</th><th>Status</th><th>Export data</th><th>New data</th><th>OVA</th></tr></thead><tbody>
-  {% for b in backups %}<tr data-status="{{ b.status }}"><td>{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %}{% if 'size unavailable' not in b.phase %} · {{ b.progress }}%{% endif %}<br><small>{{ b.phase }}{% if b.current_file %}: {{ b.current_file }}{% endif %}{% if b.throughput_mib_s %} · {{ '%.1f'|format(b.throughput_mib_s) }} MiB/s{% endif %}</small><form class="cancel-backup" method="post" action="/backups/{{ b.id }}/cancel"><button>Cancel</button></form>{% endif %}{% if b.error %}<br><small class="error-brief" title="{{ b.error }}">{{ b.error }}</small>{% endif %}</td><td>{{ bytes(b.logical_bytes) }}</td><td>{{ bytes(b.stored_bytes) }}</td><td>{% set ova = ova_exports.get(b.id) %}{% set restore = restores.get(b.id) %}{% if ova and ova.status == 'running' %}<span class="running">Packaging {{ ova.progress }}%</span>{% elif ova and ova.status == 'success' %}<a href="/backups/{{ b.id }}/ova">Download OVA</a>{% elif b.id in ova_capable %}<form method="post" action="/backups/{{ b.id }}/ova"><button>Build OVA</button></form>{% else %}<small>Not available</small>{% endif %}{% if ova and ova.error %}<br><small class="error error-brief" title="{{ ova.error }}">{{ ova.error }}</small>{% endif %}{% if b.id in ova_capable %}<br>{% if restore and restore.status == 'running' %}<span class="running">Restoring {{ restore.progress }}%</span>{% else %}<button type="button" class="restore-open" data-backup-id="{{ b.id }}" data-vm-name="{{ b.vm_name }}">Restore to ESXi</button>{% if restore and restore.status == 'success' %}<br><small class="ok">Restored as {{ restore.vm_name }}</small>{% endif %}{% endif %}{% if restore and restore.error %}<br><small class="error error-brief" title="{{ restore.error }}">{{ restore.error }}</small>{% endif %}{% endif %}</td></tr>{% else %}<tr><td colspan="6">No backups yet.</td></tr>{% endfor %}
+  {% for b in backups %}<tr data-status="{{ b.status }}"><td><time class="local-time" datetime="{{ b.started_at.isoformat() }}">{{ b.started_at.strftime('%Y-%m-%d %H:%M') }}</time></td><td>{{ b.vm_name }}</td><td class="{{ b.status }}">{{ b.status }}{% if b.status == 'running' %}{% if 'size unavailable' not in b.phase %} · {{ b.progress }}%{% endif %}<br><small>{{ b.phase|replace(' (size unavailable)', '') }}{% if b.current_file %}: {{ b.current_file }}{% endif %}{% if b.throughput_mib_s %} · {{ '%.1f'|format(b.throughput_mib_s) }} MiB/s{% endif %}</small><form class="cancel-backup" method="post" action="/backups/{{ b.id }}/cancel"><button>Cancel</button></form>{% endif %}{% if b.error %}<br><small class="error-brief" title="{{ b.error }}">{{ b.error }}</small>{% endif %}</td><td>{{ bytes(b.logical_bytes) }}</td><td>{{ bytes(b.stored_bytes) }}</td><td>{% set ova = ova_exports.get(b.id) %}{% set restore = restores.get(b.id) %}{% if ova and ova.status == 'running' %}<span class="running">Packaging {{ ova.progress }}%</span>{% elif ova and ova.status == 'success' %}<a href="/backups/{{ b.id }}/ova">Download OVA</a>{% elif b.id in ova_capable %}<form method="post" action="/backups/{{ b.id }}/ova"><button>Build OVA</button></form>{% else %}<small>Not available</small>{% endif %}{% if ova and ova.error %}<br><small class="error error-brief" title="{{ ova.error }}">{{ ova.error }}</small>{% endif %}{% if b.id in ova_capable %}<br>{% if restore and restore.status == 'running' %}<span class="running">Restoring {{ restore.progress }}%</span>{% else %}<button type="button" class="restore-open" data-backup-id="{{ b.id }}" data-vm-name="{{ b.vm_name }}">Restore to ESXi</button>{% if restore and restore.status == 'success' %}<br><small class="ok">Restored as {{ restore.vm_name }}</small>{% endif %}{% endif %}{% if restore and restore.error %}<br><small class="error error-brief" title="{{ restore.error }}">{{ restore.error }}</small>{% endif %}{% endif %}</td></tr>{% else %}<tr><td colspan="6">No backups yet.</td></tr>{% endfor %}
   </tbody></table>
   <h2>Configuration</h2><table><tbody>
     <tr><th>ESXi host</th><td>{{ config.server.host }}:{{ config.server.port }}</td><th>TLS verification</th><td>{{ config.server.verify_ssl }}</td></tr>
@@ -56,6 +57,40 @@
   <script>
     let loadedAt = new Date();
     let refreshing = false;
+    let vmSort = JSON.parse(localStorage.getItem('vmSort') || 'null');
+    function localizeTimes() {
+      document.querySelectorAll('time.local-time').forEach(element => {
+        element.textContent = new Date(element.dateTime).toLocaleString();
+      });
+    }
+    function applyVmSort() {
+      if (!vmSort) return;
+      const table = document.getElementById('vm-table');
+      const body = table?.tBodies[0];
+      if (!body) return;
+      const key = 'sort' + vmSort.key[0].toUpperCase() + vmSort.key.slice(1);
+      const numeric = ['size', 'backupSize'].includes(vmSort.key);
+      const rows = [...body.querySelectorAll('tr.vm-row')];
+      rows.sort((left, right) => {
+        const a = left.dataset[key] || ''; const b = right.dataset[key] || '';
+        const result = numeric ? Number(a) - Number(b) : a.localeCompare(b);
+        return vmSort.direction === 'asc' ? result : -result;
+      });
+      rows.forEach(row => body.append(row));
+      table.querySelectorAll('th.sortable').forEach(header => {
+        header.setAttribute('aria-sort', header.dataset.sort === vmSort.key
+          ? (vmSort.direction === 'asc' ? 'ascending' : 'descending') : 'none');
+      });
+    }
+    document.addEventListener('click', event => {
+      const header = event.target.closest('#vm-table th.sortable');
+      if (!header) return;
+      const direction = vmSort?.key === header.dataset.sort && vmSort.direction === 'asc'
+        ? 'desc' : 'asc';
+      vmSort = {key: header.dataset.sort, direction};
+      localStorage.setItem('vmSort', JSON.stringify(vmSort));
+      applyVmSort();
+    });
     const failedFilter = document.getElementById('hide-failed-jobs');
     failedFilter.checked = localStorage.getItem('hideFailedJobs') === 'true';
     function applyJobFilter() {
@@ -68,6 +103,8 @@
       applyJobFilter();
     });
     applyJobFilter();
+    localizeTimes();
+    applyVmSort();
     async function refreshDashboard() {
       if (refreshing || document.hidden) return;
       refreshing = true;
@@ -81,6 +118,8 @@
           if (current && replacement) current.replaceWith(replacement);
         }
         applyJobFilter();
+        localizeTimes();
+        applyVmSort();
         const nextStats = next.getElementById('stats');
         if (nextStats) document.getElementById('stats').childNodes[0].textContent =
           nextStats.textContent.replace(/updated.*$/, 'updated ');
@@ -125,7 +164,7 @@
     const modal = document.getElementById('vm-modal');
     const formatBytes = value => {
       if (!value) return '—';
-      if (value >= 1073741824) return (value / 1073741824).toFixed(2) + ' GiB';
+      if (value >= 1073741824) return (value / 1073741824).toFixed(0) + ' GiB';
       if (value >= 1048576) return (value / 1048576).toFixed(1) + ' MiB';
       return (value / 1024).toFixed(1) + ' KiB';
     };
@@ -153,7 +192,7 @@
         const disks = document.createElement('section'); disks.className = 'detail-section'; disks.innerHTML = '<h3>Virtual disks</h3>';
         const diskList = document.createElement('ul'); diskList.className = 'detail-list'; vm.disks.forEach(disk => { const li = document.createElement('li'); li.textContent = disk.label + ' · ' + formatBytes(disk.capacity_bytes) + (disk.backing ? ' · ' + disk.backing : ''); diskList.append(li); }); disks.append(diskList); body.append(disks);
         const backups = document.createElement('section'); backups.className = 'detail-section'; backups.innerHTML = '<h3>Backup history</h3>';
-        const currentVirtualSize = vm.disks.reduce((total, disk) => total + disk.capacity_bytes, 0); const backupList = document.createElement('ul'); backupList.className = 'detail-list'; vm.backups.forEach(backup => { const li = document.createElement('li'); const virtualSize = backup.virtual_bytes || currentVirtualSize; li.textContent = new Date(backup.started_at).toLocaleString() + ' · ' + backup.status + ' · ' + formatBytes(virtualSize) + ' virtual · ' + formatBytes(backup.logical_bytes) + ' export · ' + formatBytes(backup.stored_bytes) + ' newly stored' + (backup.error ? ' · ' + backup.error : ''); backupList.append(li); }); if (!vm.backups.length) backupList.append(Object.assign(document.createElement('li'), {textContent: 'No backups yet'})); backups.append(backupList); body.append(backups);
+        const currentVirtualSize = vm.disks.reduce((total, disk) => total + disk.capacity_bytes, 0); const backupList = document.createElement('ul'); backupList.className = 'detail-list'; vm.backups.forEach(backup => { const li = document.createElement('li'); const virtualSize = backup.virtual_bytes || currentVirtualSize; li.textContent = new Date(backup.started_at).toLocaleString() + ' · ' + backup.status + ' · ' + formatBytes(virtualSize) + ' virtual · ' + formatBytes(backup.repository_bytes) + ' repository footprint · ' + formatBytes(backup.stored_bytes) + ' newly stored' + (backup.error ? ' · ' + backup.error : ''); backupList.append(li); }); if (!vm.backups.length) backupList.append(Object.assign(document.createElement('li'), {textContent: 'No backups yet'})); backups.append(backupList); body.append(backups);
       } catch (error) { body.textContent = 'Could not load VM details: ' + error.message; }
     }
     document.addEventListener('click', event => {

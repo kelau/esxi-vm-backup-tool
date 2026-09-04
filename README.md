@@ -72,6 +72,11 @@ an independent disabled, daily, or weekly schedule at a chosen local time. Sched
 repository and resume when the web service restarts. Configuration (with password excluded) is
 available at `GET /api/v1/config`.
 
+The VM table's **Backup size** is the compressed footprint of all unique chunks referenced by that
+recovery point. **New data** in Recent jobs is only the additional repository space written during
+that run; shared chunks mean deleting one recovery point may reclaim less than its displayed
+footprint.
+
 API endpoints:
 
 | Method | Path | Purpose |

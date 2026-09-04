@@ -212,8 +212,14 @@ class BackupService:
                             )
                         raise
             if successful:
+                referenced = {
+                    chunk["sha256"]: int(chunk["stored_size"])
+                    for file in files
+                    for chunk in file["chunks"]
+                }
                 self.repository.finish(
-                    backup_id, logical=logical, stored=stored, virtual=virtual
+                    backup_id, logical=logical, stored=stored,
+                    repository_bytes=sum(referenced.values()), virtual=virtual,
                 )
             with self._cancel_lock:
                 self._cancel_events.pop(backup_id, None)

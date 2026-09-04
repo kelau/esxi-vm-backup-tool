@@ -109,6 +109,23 @@ def test_repository_stats_include_unique_chunks_and_recovery_points(tmp_path):
     assert stats["recovery_points"] == 1
 
 
+def test_existing_manifest_repository_size_is_backfilled(tmp_path):
+    repository = BackupRepository(tmp_path, chunk_size=4)
+    chunks, _, _ = repository.store_stream(BytesIO(b"abcdefgh"))
+    repository.create(BackupRecord(
+        id="existing", vm_id="vm-1", vm_name="vm", status=BackupStatus.SUCCESS
+    ))
+    repository.write_manifest("existing", {
+        "backup_id": "existing", "files": [{"chunks": chunks}],
+    })
+    expected = sum({chunk["sha256"]: chunk["stored_size"] for chunk in chunks}.values())
+    repository.db.close()
+
+    reopened = BackupRepository(tmp_path)
+
+    assert reopened.list("vm-1")[0].repository_bytes == expected
+
+
 def test_delete_vm_preserves_shared_chunks_and_removes_unique_data(tmp_path):
     repository = BackupRepository(tmp_path, chunk_size=4)
     shared, _, _ = repository.store_stream(BytesIO(b"same"))
