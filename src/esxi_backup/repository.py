@@ -6,7 +6,6 @@ import json
 import os
 import sqlite3
 import tempfile
-import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,7 +56,6 @@ class BackupRepository:
         # and this connection must therefore be allowed to follow the service across them.
         self.db = sqlite3.connect(self.root / "catalog.sqlite3", check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self._stats_cache: tuple[float, dict] | None = None
         self._migrate()
 
     def _migrate(self) -> None:
@@ -79,6 +77,13 @@ class BackupRepository:
                 progress INTEGER NOT NULL DEFAULT 0, path TEXT, error TEXT,
                 started_at TEXT NOT NULL, finished_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS chunk_index (
+                sha256 TEXT PRIMARY KEY, logical_size INTEGER NOT NULL DEFAULT 0,
+                stored_size INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS repository_meta (
+                key TEXT PRIMARY KEY, value INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS restores (
                 backup_id TEXT PRIMARY KEY, vm_name TEXT NOT NULL,
                 status TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0,
@@ -94,12 +99,60 @@ class BackupRepository:
         }.items():
             if name not in columns:
                 self.db.execute(f"ALTER TABLE backups ADD COLUMN {name} {definition}")
+        ova_columns = {row[1] for row in self.db.execute("PRAGMA table_info(ova_exports)")}
+        if "size_bytes" not in ova_columns:
+            self.db.execute(
+                "ALTER TABLE ova_exports ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0"
+            )
         self.db.execute(
             "UPDATE backups SET phase='failed' WHERE status='failed' AND phase='queued'"
         )
         self.db.execute(
             """UPDATE backups SET phase='complete',progress=100
                WHERE status='success' AND phase='queued'"""
+        )
+        self.db.commit()
+        self._backfill_repository_index()
+
+    def _backfill_repository_index(self) -> None:
+        initialized = self.db.execute(
+            "SELECT value FROM repository_meta WHERE key='index_initialized'"
+        ).fetchone()
+        if initialized:
+            return
+        logical_sizes = {}
+        manifest_bytes = 0
+        for manifest_path in self.manifests.glob("*.json"):
+            manifest_bytes += manifest_path.stat().st_size
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                for file in manifest.get("files", []):
+                    for chunk in file.get("chunks", []):
+                        logical_sizes[str(chunk["sha256"])] = int(chunk.get("size", 0))
+            except (OSError, ValueError, KeyError):
+                continue
+        for chunk_path in self.chunks.rglob("*.zst"):
+            digest = chunk_path.stem
+            self.db.execute(
+                """INSERT OR IGNORE INTO chunk_index(sha256,logical_size,stored_size)
+                   VALUES(?,?,?)""",
+                (digest, logical_sizes.get(digest, 0), chunk_path.stat().st_size),
+            )
+        for row in self.db.execute(
+            "SELECT backup_id,path FROM ova_exports WHERE path IS NOT NULL"
+        ):
+            path = Path(row["path"])
+            if path.is_file():
+                self.db.execute(
+                    "UPDATE ova_exports SET size_bytes=? WHERE backup_id=?",
+                    (path.stat().st_size, row["backup_id"]),
+                )
+        self.db.execute(
+            "INSERT OR REPLACE INTO repository_meta(key,value) VALUES('manifest_bytes',?)",
+            (manifest_bytes,),
+        )
+        self.db.execute(
+            "INSERT INTO repository_meta(key,value) VALUES('index_initialized',1)"
         )
         self.db.commit()
 
@@ -126,7 +179,6 @@ class BackupRepository:
              virtual, backup_id),
         )
         self.db.commit()
-        self._stats_cache = None
 
     def fail(self, backup_id: str, error: str) -> None:
         self.db.execute(
@@ -180,7 +232,11 @@ class BackupRepository:
                     temp_path = Path(temp.name)
                 os.replace(temp_path, target)
                 stored += len(compressed)
-                self._stats_cache = None
+            self.db.execute(
+                """INSERT OR IGNORE INTO chunk_index(sha256,logical_size,stored_size)
+                   VALUES(?,?,?)""",
+                (digest, len(data), target.stat().st_size),
+            )
             manifest.append({"sha256": digest, "size": len(data)})
             if on_bytes:
                 on_bytes(len(data))
@@ -188,8 +244,15 @@ class BackupRepository:
 
     def write_manifest(self, backup_id: str, document: dict) -> None:
         target = self.manifests / f"{backup_id}.json"
+        previous_size = target.stat().st_size if target.exists() else 0
         target.write_text(json.dumps(document, indent=2), encoding="utf-8")
-        self._stats_cache = None
+        size_delta = target.stat().st_size - previous_size
+        self.db.execute(
+            """INSERT INTO repository_meta(key,value) VALUES('manifest_bytes',?)
+               ON CONFLICT(key) DO UPDATE SET value=value+excluded.value""",
+            (size_delta,),
+        )
+        self.db.commit()
 
     def restore_stream(self, chunks: Iterable[dict], output: BinaryIO) -> None:
         for data in self.iter_chunks(chunks):
@@ -246,9 +309,10 @@ class BackupRepository:
 
     def finish_ova_export(self, backup_id: str, path: Path) -> None:
         self.db.execute(
-            """UPDATE ova_exports SET status=?,progress=100,path=?,finished_at=?
+            """UPDATE ova_exports SET status=?,progress=100,path=?,size_bytes=?,finished_at=?
                WHERE backup_id=?""",
-            (BackupStatus.SUCCESS, str(path), datetime.now(UTC).isoformat(), backup_id),
+            (BackupStatus.SUCCESS, str(path), path.stat().st_size,
+             datetime.now(UTC).isoformat(), backup_id),
         )
         self.db.commit()
 
@@ -270,19 +334,20 @@ class BackupRepository:
         return OvaExportRecord.model_validate(dict(row)) if row else None
 
     def stats(self) -> dict[str, int]:
-        now = time.monotonic()
-        if self._stats_cache and now - self._stats_cache[0] < 15:
-            return self._stats_cache[1]
-
-        def directory_size(path: Path) -> int:
-            return sum(file.stat().st_size for file in path.rglob("*") if file.is_file()) \
-                if path.exists() else 0
-
-        chunk_bytes = directory_size(self.chunks)
-        manifest_bytes = directory_size(self.manifests)
-        ova_bytes = directory_size(self.root / "exports")
-        catalog_bytes = (self.root / "catalog.sqlite3").stat().st_size
-        result = {
+        chunk_bytes = self.db.execute(
+            "SELECT COALESCE(SUM(stored_size),0) FROM chunk_index"
+        ).fetchone()[0]
+        manifest_row = self.db.execute(
+            "SELECT value FROM repository_meta WHERE key='manifest_bytes'"
+        ).fetchone()
+        manifest_bytes = manifest_row[0] if manifest_row else 0
+        ova_bytes = self.db.execute(
+            "SELECT COALESCE(SUM(size_bytes),0) FROM ova_exports WHERE status='success'"
+        ).fetchone()[0]
+        page_count = self.db.execute("PRAGMA page_count").fetchone()[0]
+        page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+        catalog_bytes = page_count * page_size
+        return {
             "total_bytes": chunk_bytes + manifest_bytes + ova_bytes + catalog_bytes,
             "chunk_bytes": chunk_bytes,
             "manifest_bytes": manifest_bytes,
@@ -292,11 +357,6 @@ class BackupRepository:
                 "SELECT COUNT(*) FROM backups WHERE status='success'"
             ).fetchone()[0],
         }
-        self._stats_cache = (now, result)
-        return result
-
-    def invalidate_stats(self) -> None:
-        self._stats_cache = None
 
     def start_restore(self, backup_id: str, vm_name: str) -> None:
         now = datetime.now(UTC).isoformat()

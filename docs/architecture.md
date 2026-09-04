@@ -33,6 +33,10 @@ New manifests also contain the native OVF descriptor and export device identifie
 creates an ESXi import specification and streams verified chunks to its HTTP NFC lease without
 materializing a second full local copy.
 
+SQLite maintains a `chunk_index` with logical and compressed sizes plus counters for manifests and
+OVA exports. Repository totals are SQL aggregates; existing repositories receive one filesystem
+index pass during migration, after which dashboard refreshes never walk the chunk directory.
+
 ## Concurrency
 
 SQLite provides transactional job-state writes. Chunk creation is safe for a single service
