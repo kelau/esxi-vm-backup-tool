@@ -88,6 +88,7 @@ class BackupRepository:
             "progress": "INTEGER NOT NULL DEFAULT 0",
             "phase": "TEXT NOT NULL DEFAULT 'queued'",
             "current_file": "TEXT",
+            "virtual_bytes": "INTEGER NOT NULL DEFAULT 0",
         }.items():
             if name not in columns:
                 self.db.execute(f"ALTER TABLE backups ADD COLUMN {name} {definition}")
@@ -105,18 +106,22 @@ class BackupRepository:
         self.db.execute(
             """INSERT INTO backups
                (id,vm_id,vm_name,status,started_at,finished_at,logical_bytes,
-                stored_bytes,progress,phase,current_file,error)
+                stored_bytes,virtual_bytes,progress,phase,current_file,error)
                VALUES (:id,:vm_id,:vm_name,:status,:started_at,:finished_at,
-                :logical_bytes,:stored_bytes,:progress,:phase,:current_file,:error)""",
+                :logical_bytes,:stored_bytes,:virtual_bytes,:progress,:phase,
+                :current_file,:error)""",
             values,
         )
         self.db.commit()
 
-    def finish(self, backup_id: str, *, logical: int, stored: int) -> None:
+    def finish(
+        self, backup_id: str, *, logical: int, stored: int, virtual: int = 0
+    ) -> None:
         self.db.execute(
             """UPDATE backups SET status=?,finished_at=?,logical_bytes=?,stored_bytes=?,
-               progress=100,phase='complete',current_file=NULL WHERE id=?""",
-            (BackupStatus.SUCCESS, datetime.now(UTC).isoformat(), logical, stored, backup_id),
+               virtual_bytes=?,progress=100,phase='complete',current_file=NULL WHERE id=?""",
+            (BackupStatus.SUCCESS, datetime.now(UTC).isoformat(), logical, stored,
+             virtual, backup_id),
         )
         self.db.commit()
 

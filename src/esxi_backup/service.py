@@ -47,6 +47,11 @@ class BackupService:
             snapshot = None
             successful = False
             logical = stored = 0
+            hardware = getattr(getattr(vm, "config", None), "hardware", None)
+            virtual = sum(
+                int(getattr(device, "capacityInBytes", 0))
+                for device in (getattr(hardware, "device", None) or [])
+            )
             try:
                 self.repository.update_progress(
                     backup_id, progress=1, phase="creating snapshot"
@@ -121,7 +126,9 @@ class BackupService:
                             )
                         raise
             if successful:
-                self.repository.finish(backup_id, logical=logical, stored=stored)
+                self.repository.finish(
+                    backup_id, logical=logical, stored=stored, virtual=virtual
+                )
         return self.repository.list(record.vm_id)[0]
 
     def restore(self, backup_id: str, destination: Path) -> list[Path]:

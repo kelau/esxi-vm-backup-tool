@@ -54,6 +54,7 @@ class BackupRecord(BaseModel):
     finished_at: datetime | None = None
     logical_bytes: int = 0
     stored_bytes: int = 0
+    virtual_bytes: int = 0
     progress: Annotated[int, Field(ge=0, le=100)] = 0
     phase: str = "queued"
     current_file: str | None = None

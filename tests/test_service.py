@@ -24,7 +24,12 @@ class FakeClient:
     imported = None
 
     def __init__(self, _config):
-        self.vm = SimpleNamespace(_moId="vm-42", name="mail")
+        self.vm = SimpleNamespace(
+            _moId="vm-42", name="mail",
+            config=SimpleNamespace(hardware=SimpleNamespace(
+                device=[SimpleNamespace(capacityInBytes=1024)]
+            )),
+        )
 
     def __enter__(self):
         return self
@@ -78,6 +83,7 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
     assert record.progress == 100
     assert record.phase == "complete"
     assert record.logical_bytes == 12
+    assert record.virtual_bytes == 1024
     assert FakeClient.removed
     assert (tmp_path / "manifests" / f"{record.id}.json").exists()
 
