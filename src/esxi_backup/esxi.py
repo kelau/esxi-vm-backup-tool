@@ -69,10 +69,14 @@ class EsxiClient:
             hardware = getattr(config, "hardware", None)
             devices = getattr(hardware, "device", None) or []
             runtime = getattr(vm, "runtime", None)
+            connection_state = str(getattr(runtime, "connectionState", "connected"))
+            if config is None and connection_state == "connected":
+                connection_state = "inaccessible"
             inventory.append(VMInfo(
                 id=vm._moId,
                 name=getattr(vm, "name", vm._moId),
                 power_state=str(getattr(runtime, "powerState", "unknown")),
+                connection_state=connection_state,
                 guest_os=getattr(config, "guestFullName", None),
                 provisioned_bytes=sum(
                     getattr(device, "capacityInBytes", 0) for device in devices

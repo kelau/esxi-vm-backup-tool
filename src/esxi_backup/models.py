@@ -44,6 +44,7 @@ class VMInfo(BaseModel):
     id: str
     name: str
     power_state: str
+    connection_state: str = "connected"
     guest_os: str | None = None
     provisioned_bytes: int = 0
 

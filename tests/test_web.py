@@ -17,7 +17,13 @@ class FakeClient:
         pass
 
     def list_vms(self):
-        return [VMInfo(id="vm-1", name="demo", power_state="poweredOn")]
+        return [
+            VMInfo(id="vm-1", name="demo", power_state="poweredOn"),
+            VMInfo(
+                id="vm-broken", name="missing-vmx", power_state="unknown",
+                connection_state="inaccessible",
+            ),
+        ]
 
     def get_vm_details(self, identity):
         if identity != "vm-1":
@@ -77,6 +83,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "2 GiB" in response.text
     assert "Live on ESXi" in response.text
     assert "Backup only" in response.text
+    assert "Inaccessible on ESXi" in response.text
     assert "deleted-demo" in response.text
     assert 'data-vm-state="backup_only"' in response.text
     assert "Remove all backups" in response.text
@@ -85,6 +92,10 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "localizeTimes" in response.text
     assert "applyVmSort" in response.text
     assert 'data-sort="backupSize"' in response.text
+    assert "backup-progress-row" in response.text
+    assert "Backup running" in response.text
+    assert "throughput-chart" in response.text
+    assert "formatDuration" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):

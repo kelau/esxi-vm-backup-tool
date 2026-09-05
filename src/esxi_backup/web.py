@@ -39,7 +39,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         for backup in backups:
             latest.setdefault(backup.vm_id, backup)
         live_vm_ids = {vm.id for vm in vms}
-        vm_states = {vm.id: "live" for vm in vms}
+        vm_states = {
+            vm.id: (
+                "live" if vm.connection_state == "connected" else "inaccessible"
+            )
+            for vm in vms
+        }
         for vm_id, backup in latest.items():
             if vm_id not in live_vm_ids:
                 vms.append(VMInfo(
