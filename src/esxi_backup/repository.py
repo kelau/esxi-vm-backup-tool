@@ -109,6 +109,7 @@ class BackupRepository:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(backups)")}
         for name, definition in {
             "progress": "INTEGER NOT NULL DEFAULT 0",
+            "expected_bytes": "INTEGER NOT NULL DEFAULT 0",
             "phase": "TEXT NOT NULL DEFAULT 'queued'",
             "current_file": "TEXT",
             "virtual_bytes": "INTEGER NOT NULL DEFAULT 0",
@@ -221,10 +222,10 @@ class BackupRepository:
         self.db.execute(
             """INSERT INTO backups
                (id,vm_id,vm_name,status,started_at,finished_at,logical_bytes,
-                stored_bytes,repository_bytes,virtual_bytes,throughput_mib_s,
+                expected_bytes,stored_bytes,repository_bytes,virtual_bytes,throughput_mib_s,
                 progress,phase,current_file,error)
                VALUES (:id,:vm_id,:vm_name,:status,:started_at,:finished_at,
-                :logical_bytes,:stored_bytes,:repository_bytes,:virtual_bytes,
+                :logical_bytes,:expected_bytes,:stored_bytes,:repository_bytes,:virtual_bytes,
                 :throughput_mib_s,
                 :progress,:phase,
                 :current_file,:error)""",
@@ -280,7 +281,8 @@ class BackupRepository:
         # Catalogs created by older versions can contain NULL in columns added
         # later. Normalize defensively even if a migration was interrupted.
         for field, default in {
-            "logical_bytes": 0, "stored_bytes": 0, "repository_bytes": 0,
+            "logical_bytes": 0, "expected_bytes": 0, "stored_bytes": 0,
+            "repository_bytes": 0,
             "virtual_bytes": 0,
             "throughput_mib_s": 0.0, "progress": 0, "phase": "queued",
         }.items():
@@ -292,23 +294,15 @@ class BackupRepository:
     def update_progress(
         self, backup_id: str, *, progress: int, phase: str,
         current_file: str | None = None, logical_bytes: int | None = None,
-        throughput_mib_s: float = 0,
+        throughput_mib_s: float = 0, expected_bytes: int | None = None,
     ) -> None:
-        if logical_bytes is None:
-            self.db.execute(
-                """UPDATE backups SET progress=?,phase=?,current_file=?,throughput_mib_s=?
-                   WHERE id=?""",
-                (max(0, min(100, progress)), phase, current_file,
-                 throughput_mib_s, backup_id),
-            )
-        else:
-            self.db.execute(
-                """UPDATE backups SET progress=?,phase=?,current_file=?,logical_bytes=?,
-                   throughput_mib_s=?
-                   WHERE id=?""",
-                (max(0, min(100, progress)), phase, current_file,
-                 logical_bytes, throughput_mib_s, backup_id),
-            )
+        self.db.execute(
+            """UPDATE backups SET progress=?,phase=?,current_file=?,
+               logical_bytes=COALESCE(?,logical_bytes),throughput_mib_s=?,
+               expected_bytes=COALESCE(?,expected_bytes) WHERE id=?""",
+            (max(0, min(100, progress)), phase, current_file, logical_bytes,
+             throughput_mib_s, expected_bytes, backup_id),
+        )
         self.db.commit()
 
     def store_stream(

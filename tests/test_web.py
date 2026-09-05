@@ -51,7 +51,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     service = BackupService(config, client_factory=FakeClient)
     service.repository.create(BackupRecord(
         id="running-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.RUNNING,
-        phase="exporting", logical_bytes=2 * 1024**3, throughput_mib_s=12.5,
+        phase="exporting", logical_bytes=2 * 1024**3, expected_bytes=4 * 1024**3,
+        throughput_mib_s=12.5,
     ))
     service.repository.create(BackupRecord(
         id="deleted-1", vm_id="vm-deleted", vm_name="deleted-demo",
@@ -96,6 +97,10 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Backup running" in response.text
     assert "throughput-chart" in response.text
     assert "formatDuration" in response.text
+    assert "Estimated remaining" in response.text
+    assert "updateRemainingTimes" in response.text
+    assert 'class="vm-name"' in response.text
+    assert 'class="vm-os"' in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):

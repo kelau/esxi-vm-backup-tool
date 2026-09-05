@@ -97,6 +97,7 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
     assert record.progress == 100
     assert record.phase == "complete"
     assert record.logical_bytes == 12
+    assert record.expected_bytes == 1024
     assert record.repository_bytes > 0
     assert record.virtual_bytes == 1024
     assert FakeClient.removed

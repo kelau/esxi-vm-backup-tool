@@ -89,7 +89,8 @@ class BackupService:
             )
             try:
                 self.repository.update_progress(
-                    backup_id, progress=1, phase="creating snapshot"
+                    backup_id, progress=1, phase="creating snapshot",
+                    expected_bytes=virtual,
                 )
                 snapshot = client.create_snapshot(
                     vm, f"esxi-backup-{backup_id[:8]}", self.config.quiesce
@@ -104,6 +105,7 @@ class BackupService:
                     active_files: set[str] = set()
                     progress_lock = threading.Lock()
                     transfer_started = time.monotonic()
+                    expected_total = virtual or sum(file_weights)
 
                     def download(file_index, item):
                         nonlocal total_transferred
@@ -130,21 +132,26 @@ class BackupService:
                                         min(1.0, state["file_bytes"] / current_size)
                                         if current_size else 0.0
                                     )
-                                    weighted_progress = sum(
-                                        fraction * weight
-                                        for fraction, weight in zip(
-                                            file_progress, file_weights, strict=True
+                                    if current_size:
+                                        weighted_progress = sum(
+                                            fraction * weight
+                                            for fraction, weight in zip(
+                                                file_progress, file_weights, strict=True
+                                            )
+                                        ) / sum(file_weights)
+                                    elif virtual:
+                                        weighted_progress = min(
+                                            1.0, total_transferred / virtual
                                         )
-                                    ) / sum(file_weights)
+                                    else:
+                                        weighted_progress = 0
                                     percent = min(95, max(2, int(weighted_progress * 95)))
                                     elapsed = max(time.monotonic() - transfer_started, 0.001)
                                     throughput = total_transferred / 1048576 / elapsed
                                     lease.HttpNfcLeaseProgress(percent)
                                     if percent != state["last_percent"] or current_size == 0:
-                                        phase = (
-                                            "exporting"
-                                            if current_size else "exporting (size unavailable)"
-                                        )
+                                        phase = "exporting" if current_size or virtual else \
+                                            "exporting (size unavailable)"
                                         current = ", ".join(sorted(active_files))
                                         if len(active_files) > 2:
                                             current = f"{len(active_files)} files"
@@ -153,6 +160,7 @@ class BackupService:
                                             current_file=current,
                                             logical_bytes=total_transferred,
                                             throughput_mib_s=throughput,
+                                            expected_bytes=expected_total or None,
                                         )
                                         state["last_percent"] = percent
 

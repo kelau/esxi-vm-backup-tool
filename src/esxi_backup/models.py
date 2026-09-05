@@ -57,6 +57,7 @@ class BackupRecord(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     logical_bytes: int = 0
+    expected_bytes: int = 0
     stored_bytes: int = 0
     repository_bytes: int = 0
     virtual_bytes: int = 0
