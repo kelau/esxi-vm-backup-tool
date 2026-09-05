@@ -145,6 +145,13 @@ pytest --cov=esxi_backup
 Tests use an in-memory ESXi adapter and do not require a hypervisor. See
 [`docs/architecture.md`](docs/architecture.md) and [`docs/operations.md`](docs/operations.md).
 
+## Versioning
+
+The project follows semantic versioning and is currently pre-1.0. Version `0.5.2` marks the first
+52-commit development milestone. From this baseline, feature releases increment the minor version,
+fix-only releases increment the patch version, and `1.0.0` will mark a stable repository format and
+supported upgrade path. Run `esxi-backup --version` to see the installed version.
+
 ## Security
 
 - Create a dedicated least-privilege ESXi account with VM snapshot, export, inventory, and lease

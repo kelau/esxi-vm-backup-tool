@@ -7,12 +7,32 @@ from typing import Annotated
 import typer
 import uvicorn
 
+from . import __version__
 from .config import load_config
 from .service import BackupService
 
 app = typer.Typer(help="Hot, deduplicated backups for standalone VMware ESXi hosts.")
 ConfigOption = Annotated[Path | None, typer.Option("--config", "-c")]
 JsonOption = Annotated[bool, typer.Option("--json")]
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version", callback=version_callback, is_eager=True,
+            help="Show the application version and exit.",
+        ),
+    ] = False,
+) -> None:
+    """Hot, deduplicated backups for standalone VMware ESXi hosts."""
 
 
 def service(config: Path | None) -> BackupService:

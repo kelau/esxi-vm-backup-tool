@@ -73,6 +73,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
+    assert "v0.5.2" in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
     assert "refreshDashboard" in response.text

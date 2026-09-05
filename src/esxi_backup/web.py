@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from . import __version__
 from .config import load_config, resolve_config_path, save_config
 from .models import (
     AppConfig,
@@ -22,6 +23,7 @@ from .scheduler import BackupScheduler
 from .service import BackupService
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.globals["app_version"] = __version__
 optional_vm_ids = Form(default=None)
 
 
@@ -32,7 +34,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         yield
         instance.state.scheduler.shutdown()
 
-    app = FastAPI(title="ESXi VM Backup Tool", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="ESXi VM Backup Tool", version=__version__, lifespan=lifespan)
     app.state.service = BackupService(load_config(config_path))
     app.state.config_path = resolve_config_path(config_path)
     app.state.scheduler = BackupScheduler(app.state.service)
