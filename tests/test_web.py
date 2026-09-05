@@ -168,6 +168,24 @@ def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
     assert 'password = "secret"' in saved
 
 
+def test_config_api_excludes_both_passwords(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(
+            host="esxi.test", username="user", password="api-secret",
+            ssh_password="ssh-secret",
+        ),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    server = TestClient(create_app()).get("/api/v1/config").json()["server"]
+
+    assert "password" not in server
+    assert "ssh_password" not in server
+
+
 def test_web_can_build_and_download_ova(tmp_path, monkeypatch):
     config = AppConfig(
         server=ServerConfig(host="esxi.test", username="user", password="secret"),

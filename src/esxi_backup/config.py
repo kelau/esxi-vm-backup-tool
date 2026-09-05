@@ -24,6 +24,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     # Environment variables are convenient for unattended jobs and keep secrets out of files.
     if password := os.environ.get("ESXI_BACKUP_PASSWORD"):
         data.setdefault("server", {})["password"] = password
+    if ssh_password := os.environ.get("ESXI_BACKUP_SSH_PASSWORD"):
+        data.setdefault("server", {})["ssh_password"] = ssh_password
     return AppConfig.model_validate(data)
 
 
@@ -35,8 +37,10 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     """Atomically persist configuration while preserving a private file mode on POSIX."""
     target = resolve_config_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    data = config.model_dump(mode="python")
+    data = config.model_dump(mode="python", exclude_none=True)
     data["server"]["password"] = config.server.password.get_secret_value()
+    if config.server.ssh_password:
+        data["server"]["ssh_password"] = config.server.ssh_password.get_secret_value()
     with tempfile.NamedTemporaryFile(
         mode="wb", dir=target.parent, prefix=f".{target.name}.", delete=False
     ) as handle:

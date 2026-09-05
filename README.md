@@ -41,6 +41,11 @@ Edit `config.toml`. For scheduled jobs, omit the real password from disk and pro
 `ESXI_BACKUP_PASSWORD`. If ESXi uses a self-signed certificate, install its CA certificate;
 `verify_ssl = false` is available for isolated test environments but is not recommended.
 
+Standalone ESXi may expose `ExportSnapshot` but reject it at runtime. For hot backups in that
+case, enable the ESXi SSH service and configure `ssh_enabled`, `ssh_username`, and
+`ssh_password` (or `ESXI_BACKUP_SSH_PASSWORD`). The SSH account must be allowed to run
+`vmkfstools`. Keep host-key verification enabled and add the host key to `known_hosts`.
+
 ## CLI and automation
 
 ```bash
@@ -96,9 +101,12 @@ management network. Bind to `127.0.0.1` (the default) otherwise.
 1. Connect to ESXi through the vSphere API.
 2. Create a quiesced snapshot without VM memory. VMware Tools must be installed for application-
    aware filesystem quiescing. Set `quiesce = false` if unavailable.
-3. Acquire an HTTP NFC lease and stream every export file.
+3. Try an HTTP NFC snapshot-export lease. If standalone ESXi does not implement it and the SSH
+   fallback is enabled, use `vmkfstools` to create temporary stream-optimized thin clones from
+   the snapshot disk chain and transfer them over SFTP.
 4. Hash, compress, and atomically persist chunks; write the recovery-point manifest.
-5. Complete the lease and remove the snapshot in a `finally` block, including after failures.
+5. Complete the lease or remove temporary SSH clones, then remove the snapshot in `finally`
+   blocks, including after failures.
 
 Snapshot lifetime increases consolidation risk. Monitor datastore free space, keep jobs short, and
 alert on failed snapshot removal. Database servers may need guest-native pre/post freeze hooks for
@@ -133,7 +141,8 @@ Tests use an in-memory ESXi adapter and do not require a hypervisor. See
 ## Security
 
 - Create a dedicated least-privilege ESXi account with VM snapshot, export, inventory, and lease
-  permissions. Do not use `root` for scheduled backups.
+  permissions. The SSH fallback additionally needs an ESXi shell account permitted to run
+  `vmkfstools`; restrict and protect it carefully.
 - Store the repository on encrypted, access-controlled storage and copy it off-host.
 - Protect configuration permissions and inject credentials through a secret manager.
 - The chunk hash is an integrity check, not a signature. Use filesystem immutability or object-lock

@@ -121,7 +121,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/config")
     def api_config():
-        config = app.state.service.config.model_dump(mode="json", exclude={"server": {"password"}})
+        config = app.state.service.config.model_dump(
+            mode="json", exclude={"server": {"password", "ssh_password"}}
+        )
         return config
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -140,6 +142,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         password: str = Form(default=""),
         port: int = Form(),
         verify_ssl: bool = Form(default=False),
+        ssh_enabled: bool = Form(default=False),
+        ssh_port: int = Form(default=22),
+        ssh_username: str = Form(default=""),
+        ssh_password: str = Form(default=""),
+        ssh_verify_host_key: bool = Form(default=False),
         repository: str = Form(),
         chunk_size_mib: int = Form(),
         compression_level: int = Form(),
@@ -158,6 +165,14 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                     host=host.strip(), username=username.strip(),
                     password=password or current.server.password.get_secret_value(),
                     port=port, verify_ssl=verify_ssl,
+                    ssh_enabled=ssh_enabled, ssh_port=ssh_port,
+                    ssh_username=ssh_username.strip() or None,
+                    ssh_password=(
+                        ssh_password
+                        or (current.server.ssh_password.get_secret_value()
+                            if current.server.ssh_password else None)
+                    ),
+                    ssh_verify_host_key=ssh_verify_host_key,
                 ),
                 repository=repository.strip(), chunk_size_mib=chunk_size_mib,
                 compression_level=compression_level, pipeline_workers=pipeline_workers,

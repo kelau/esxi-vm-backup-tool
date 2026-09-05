@@ -59,6 +59,9 @@ class FakeClient:
             name="disk.vmdk", url="memory://disk", size=12, device_id="disk-1"
         )]
 
+    def export_hot(self, snapshot, _backup_id):
+        return self.export(snapshot)
+
     def create_ovf_descriptor(self, _vm, _exports):
         return "<ovf>descriptor</ovf>"
 

@@ -117,7 +117,11 @@ class BackupService:
                     )
                     export_source = snapshot
                 files = []
-                with client.export(export_source) as (lease, exports):
+                export_context = (
+                    client.export_hot(export_source, backup_id)
+                    if snapshot is not None else client.export(export_source)
+                )
+                with export_context as (lease, exports):
                     ovf_descriptor = client.create_ovf_descriptor(vm, exports)
                     export_count = max(1, len(exports))
                     total_transferred = 0
@@ -169,7 +173,8 @@ class BackupService:
                                     percent = min(95, max(2, int(weighted_progress * 95)))
                                     elapsed = max(time.monotonic() - transfer_started, 0.001)
                                     throughput = total_transferred / 1048576 / elapsed
-                                    lease.HttpNfcLeaseProgress(percent)
+                                    if lease is not None:
+                                        lease.HttpNfcLeaseProgress(percent)
                                     if percent != state["last_percent"] or current_size == 0:
                                         phase = "exporting" if current_size or virtual else \
                                             "exporting (size unavailable)"

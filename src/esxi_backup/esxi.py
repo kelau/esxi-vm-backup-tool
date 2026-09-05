@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import shlex
 import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,6 +13,11 @@ from urllib.request import Request, urlopen
 
 from pyVim.connect import Disconnect, SmartConnect
 from pyVmomi import vim, vmodl
+
+try:
+    import paramiko
+except ImportError:  # pragma: no cover - produces an actionable runtime error
+    paramiko = None
 
 from .models import ServerConfig, VMInfo
 
@@ -31,12 +38,34 @@ class ExportFile:
     device_id: str
 
 
+class SnapshotExportUnsupported(RuntimeError):
+    pass
+
+
+class SftpExportStream:
+    def __init__(self, sftp, handle, size: int):
+        self.sftp = sftp
+        self.handle = handle
+        self.headers = {"Content-Length": str(size)}
+
+    def read(self, size=-1):
+        return self.handle.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.handle.close()
+        self.sftp.close()
+
+
 class EsxiClient:
     """Small pyVmomi adapter. Keeping it isolated makes backup logic easily testable."""
 
     def __init__(self, config: ServerConfig):
         self.config = config
         self.si = None
+        self.ssh = None
 
     def __enter__(self):
         context = ssl.create_default_context()
@@ -51,6 +80,9 @@ class EsxiClient:
         return self
 
     def __exit__(self, *_):
+        if self.ssh:
+            self.ssh.close()
+            self.ssh = None
         if self.si:
             Disconnect(self.si)
 
@@ -154,11 +186,7 @@ class EsxiClient:
             lease = export_snapshot() if export_snapshot else source.ExportVm()
         except vmodl.fault.NotSupported as exc:
             if getattr(source, "ExportSnapshot", None):
-                raise RuntimeError(
-                    "This ESXi endpoint does not support exporting a snapshot. Hot backup "
-                    "requires vCenter snapshot export or the SSH transport; power off the VM "
-                    "to use direct export."
-                ) from exc
+                raise SnapshotExportUnsupported from exc
             raise RuntimeError("This ESXi endpoint does not support VM export.") from exc
         except vim.fault.InvalidState as exc:
             raise RuntimeError(
@@ -192,7 +220,109 @@ class EsxiClient:
             lease.HttpNfcLeaseAbort()
             raise
 
+    def _connect_ssh(self):
+        if not self.config.ssh_enabled:
+            raise RuntimeError(
+                "This standalone ESXi host requires the SSH fallback for hot backups. "
+                "Enable it under Configuration after starting the ESXi SSH service."
+            )
+        if paramiko is None:
+            raise RuntimeError("SSH hot backup requires the paramiko package.")
+        client = paramiko.SSHClient()
+        if self.config.ssh_verify_host_key:
+            client.load_system_host_keys()
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        password = self.config.ssh_password or self.config.password
+        client.connect(
+            hostname=self.config.host,
+            port=self.config.ssh_port,
+            username=self.config.ssh_username or self.config.username,
+            password=password.get_secret_value(),
+            timeout=30,
+            look_for_keys=False,
+            allow_agent=False,
+        )
+        self.ssh = client
+        return client
+
+    @staticmethod
+    def _datastore_path(backing: str) -> tuple[str, str]:
+        match = re.fullmatch(r"\[([^]]+)]\s+(.+)", backing)
+        if not match or ".." in PurePosixPath(match.group(2)).parts:
+            raise ValueError(f"Unsupported VMDK backing path: {backing}")
+        return match.group(1), match.group(2)
+
+    def _run_ssh(self, command: str) -> None:
+        _stdin, stdout, stderr = self.ssh.exec_command(command, timeout=3600)
+        status = stdout.channel.recv_exit_status()
+        if status:
+            message = stderr.read().decode("utf-8", "replace").strip()
+            raise RuntimeError(f"ESXi vmkfstools failed: {message or f'exit {status}'}")
+
+    @contextmanager
+    def export_snapshot_ssh(self, snapshot, backup_id: str):
+        ssh = self._connect_ssh()
+        sftp = ssh.open_sftp()
+        created: list[str] = []
+        directories: set[str] = set()
+        files: list[ExportFile] = []
+        try:
+            hardware = getattr(getattr(snapshot, "config", None), "hardware", None)
+            disks = [
+                device for device in (getattr(hardware, "device", None) or [])
+                if isinstance(device, vim.vm.device.VirtualDisk)
+            ]
+            if not disks:
+                raise RuntimeError("The snapshot contains no exportable virtual disks.")
+            for index, disk in enumerate(disks, start=1):
+                datastore, relative = self._datastore_path(disk.backing.fileName)
+                directory = f"/vmfs/volumes/{datastore}/.esxi-backup-{backup_id}"
+                if directory not in directories:
+                    sftp.mkdir(directory)
+                    directories.add(directory)
+                source = f"/vmfs/volumes/{datastore}/{relative}"
+                destination = f"{directory}/disk-{index:02d}.vmdk"
+                self._run_ssh(
+                    "vmkfstools -i " + shlex.quote(source) + " "
+                    + shlex.quote(destination) + " -d streamOptimized"
+                )
+                created.append(destination)
+                files.append(ExportFile(
+                    name=PurePosixPath(destination).name,
+                    url=f"sftp:{destination}",
+                    size=int(sftp.stat(destination).st_size),
+                    device_id=str(disk.key),
+                ))
+            yield None, files
+        finally:
+            for path in reversed(created):
+                try:
+                    sftp.remove(path)
+                except OSError:
+                    pass
+            for directory in directories:
+                try:
+                    sftp.rmdir(directory)
+                except OSError:
+                    pass
+            sftp.close()
+
+    @contextmanager
+    def export_hot(self, snapshot, backup_id: str):
+        try:
+            with self.export(snapshot) as result:
+                yield result
+        except SnapshotExportUnsupported:
+            with self.export_snapshot_ssh(snapshot, backup_id) as result:
+                yield result
+
     def open_export(self, url: str):
+        if url.startswith("sftp:"):
+            path = url.removeprefix("sftp:")
+            sftp = self.ssh.open_sftp()
+            return SftpExportStream(sftp, sftp.open(path, "rb"), sftp.stat(path).st_size)
         context = ssl.create_default_context()
         if not self.config.verify_ssl:
             context.check_hostname = False

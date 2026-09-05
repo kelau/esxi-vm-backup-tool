@@ -20,6 +20,11 @@ class ServerConfig(BaseModel):
     password: SecretStr
     port: Annotated[int, Field(ge=1, le=65535)] = 443
     verify_ssl: bool = True
+    ssh_enabled: bool = False
+    ssh_port: Annotated[int, Field(ge=1, le=65535)] = 22
+    ssh_username: str | None = None
+    ssh_password: SecretStr | None = None
+    ssh_verify_host_key: bool = True
 
 
 class RetentionConfig(BaseModel):

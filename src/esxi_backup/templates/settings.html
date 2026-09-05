@@ -25,6 +25,14 @@
       <label>Username<input name="username" value="{{ config.server.username }}" required autocomplete="username"></label>
       <label>Password<input name="password" type="password" placeholder="Leave blank to keep current" autocomplete="new-password"></label>
     </div><label class="check"><input name="verify_ssl" type="checkbox" value="true" {% if config.server.verify_ssl %}checked{% endif %}> Verify TLS certificate</label>
+    <h2>SSH hot-backup transport</h2><div class="grid">
+      <label>SSH port<input name="ssh_port" type="number" min="1" max="65535" value="{{ config.server.ssh_port }}" required></label>
+      <label>SSH username<input name="ssh_username" value="{{ config.server.ssh_username or '' }}" placeholder="Defaults to ESXi username"></label>
+      <label>SSH password<input name="ssh_password" type="password" placeholder="Leave blank to keep current" autocomplete="new-password"></label>
+    </div>
+    <label class="check"><input name="ssh_enabled" type="checkbox" value="true" {% if config.server.ssh_enabled %}checked{% endif %}> Enable SSH fallback for hot backups</label>
+    <label class="check"><input name="ssh_verify_host_key" type="checkbox" value="true" {% if config.server.ssh_verify_host_key %}checked{% endif %}> Verify SSH host key</label>
+    <small>Requires the ESXi SSH service and permission to run vmkfstools. With verification enabled, the host must be present in the service account's known_hosts file.</small>
     <h2>Backup storage</h2><div class="grid">
       <label>Repository path<input name="repository" value="{{ config.repository }}" required></label>
       <label>Chunk size (MiB)<input name="chunk_size_mib" type="number" min="1" max="256" value="{{ config.chunk_size_mib }}" required></label>

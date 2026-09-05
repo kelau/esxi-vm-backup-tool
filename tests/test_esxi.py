@@ -41,3 +41,9 @@ def test_nfc_urls_with_vm_name_spaces_are_encoded():
     assert EsxiClient._safe_url(url) == (
         "https://esxi/ha-nfc/id/Usenet%20Indexers.nvram?token=a%20b"
     )
+
+
+def test_esxi_datastore_path_is_converted_safely():
+    assert EsxiClient._datastore_path("[DS3] Cookie Clicker/disk-000001.vmdk") == (
+        "DS3", "Cookie Clicker/disk-000001.vmdk"
+    )
