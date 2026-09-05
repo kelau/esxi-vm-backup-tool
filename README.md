@@ -73,10 +73,12 @@ secret manager before executing the command; do not place the password in the cr
 ## Web UI and API
 
 Run `esxi-backup web`, then open `http://localhost:8080`. The dashboard shows VMs, power state,
-latest recovery point, storage consumed, failures, and a **Back up now** action. Each VM can have
-an independent disabled, daily, or weekly schedule at a chosen local time. Schedules persist in the
-repository and resume when the web service restarts. Configuration (with password excluded) is
-available at `GET /api/v1/config`.
+latest recovery point, storage consumed, failures, OVA build progress, and a **Back up now** action.
+The Schedules page manages named daily or weekly policies. A policy can contain multiple VMs, a VM
+can belong to multiple policies, and each policy controls snapshot quiescing and optional automatic
+OVA packaging. Existing per-VM schedules migrate to single-VM named policies. Schedules persist in
+the repository and resume when the web service restarts. Configuration (with passwords excluded)
+is available at `GET /api/v1/config`.
 
 The VM table's **Backup size** is the compressed footprint of all unique chunks referenced by that
 recovery point. **New data** in Recent jobs is only the additional repository space written during
@@ -90,8 +92,7 @@ API endpoints:
 | `GET` | `/api/v1/vms` | VM inventory |
 | `GET` | `/api/v1/backups` | Backup history and status |
 | `GET` | `/api/v1/config` | Effective non-secret configuration |
-| `GET` | `/api/v1/schedules` | All per-VM schedules and next run times |
-| `PUT` | `/api/v1/vms/{id}/schedule` | Create, update, or disable a VM schedule |
+| `GET` | `/api/v1/schedules` | Named schedule policies and next run times |
 | `POST` | `/api/v1/vms/{id}/backups` | Queue a backup |
 
 Put the web service behind an authenticated TLS reverse proxy before exposing it beyond a trusted

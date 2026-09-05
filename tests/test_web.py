@@ -95,6 +95,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Restore to ESXi" in response.text
     assert "localizeTimes" in response.text
     assert "applyVmSort" in response.text
+    assert 'href="/schedules"' in response.text
+    assert "enhanceOvaProgress" in response.text
     assert 'data-sort="backupSize"' in response.text
     assert "backup-progress-row" in response.text
     assert "Backup running" in response.text
@@ -232,6 +234,7 @@ def test_web_can_build_and_download_ova(tmp_path, monkeypatch):
     assert service.repository.get_ova_export("backup-1").status == "success"
     assert download.status_code == 200
     assert download.headers["content-type"] == "application/x-virtualization-ova"
+    assert 'filename="demo.ova"' in download.headers["content-disposition"]
 
 
 def test_web_can_restore_specific_recovery_point(tmp_path, monkeypatch):

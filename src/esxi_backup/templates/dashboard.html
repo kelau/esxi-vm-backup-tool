@@ -25,23 +25,20 @@
   </style>
 </head>
 <body><main>
-  <header><h1>ESXi VM Backup</h1><span><a href="#" id="refresh" title="Refresh dashboard">Refresh</a> · <a href="/settings">Settings</a> · <span id="stats" class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
+  <header><h1>ESXi VM Backup</h1><span><a href="#" id="refresh" title="Refresh dashboard">Refresh</a> · <a href="/schedules">Schedules</a> · <a href="/settings">Settings</a> · <span id="stats" class="stats">{{ vms|length }} VMs · {{ backups|length }} recent backups · updated <span id="updated">now</span></span></span></header>
   <div id="connection">{% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}</div>
   <section id="repo-summary" class="repo-summary"><div class="repo-card"><small>Total repository</small><strong>{{ bytes(repository_stats.total_bytes) }}</strong></div><div class="repo-card"><small>Deduplicated chunks</small><strong>{{ bytes(repository_stats.chunk_bytes) }}</strong></div><div class="repo-card"><small>OVA exports</small><strong>{{ bytes(repository_stats.ova_bytes) }}</strong></div><div class="repo-card"><small>Recovery points</small><strong>{{ repository_stats.recovery_points }}</strong></div></section>
-  <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th class="sortable" data-sort="name">VM</th><th class="sortable" data-sort="state">State</th><th class="sortable" data-sort="power">Power</th><th class="sortable" data-sort="size">VM size</th><th class="sortable" data-sort="backup">Latest backup</th><th class="sortable" data-sort="backupSize">Backup size</th><th></th></tr></thead><tbody>
+  <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th class="sortable" data-sort="name">VM</th><th class="sortable" data-sort="state">State</th><th class="sortable" data-sort="power">Power</th><th class="sortable" data-sort="size">VM size</th><th class="sortable" data-sort="backup">Latest backup</th><th class="sortable" data-sort="backupSize">Backup size</th><th title="OVA download">OVA</th><th></th></tr></thead><tbody>
   {% for vm in vms %}<tr class="vm-row" data-vm-id="{{ vm.id }}" data-vm-state="{{ vm_states[vm.id] }}" data-sort-name="{{ vm.name|lower }}" data-sort-state="{{ vm_states[vm.id] }}" data-sort-power="{{ vm.power_state }}" data-sort-size="{{ vm.provisioned_bytes }}" data-sort-backup="{{ latest[vm.id].started_at.isoformat() if vm.id in latest else '' }}" data-sort-backup-size="{{ latest[vm.id].repository_bytes|default(latest[vm.id].stored_bytes, true) if vm.id in latest else 0 }}"><td><span class="vm-name">{{ vm.name }}</span><br><small class="vm-os">{{ vm.reference or vm.guest_os or vm.id }}</small></td>
     <td><span class="state {{ vm_states[vm.id]|replace('_', '-') }}">{% if vm_states[vm.id] == 'live' %}Live on ESXi{% elif vm_states[vm.id] == 'inaccessible' %}Inaccessible on ESXi{% else %}Backup only{% endif %}</span></td>
     <td>{% if vm_states[vm.id] == 'live' %}<span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span></span>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="size">{% if vm.provisioned_bytes %}{{ bytes(vm.provisioned_bytes) }}{% else %}<span class="muted">Unknown</span>{% endif %}</td>
     <td>{% if vm.id in latest %}{% if latest[vm.id].status == 'running' %}<span class="running-icon" title="Backup running" aria-label="Backup running">↻</span> · {% endif %}<time class="relative-backup-time" datetime="{{ latest[vm.id].started_at.isoformat() }}">{{ latest[vm.id].started_at.strftime('%Y-%m-%d') }}</time>{% else %}Never{% endif %}</td>
     <td class="size">{% if vm.id in latest and latest[vm.id].status == 'success' %}{{ bytes(latest[vm.id].repository_bytes|default(latest[vm.id].stored_bytes, true)) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+    {% set vm_recovery = latest_recovery.get(vm.id) %}{% set vm_ova = ova_exports.get(vm_recovery.id) if vm_recovery else none %}<td>{% if vm_ova and vm_ova.status == 'success' %}<a href="/backups/{{ vm_recovery.id }}/ova" title="Download latest OVA" aria-label="Download {{ vm.name }} OVA">⬇</a>{% elif vm_ova and vm_ova.status == 'running' %}<span title="Building OVA">{{ vm_ova.progress }}%</span><div class="bar"><span style="width:{{ vm_ova.progress }}%"></span></div>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="actions-cell"><details class="actions"><summary aria-label="Actions for {{ vm.name }}" title="Actions">⋮</summary><div class="actions-menu">
       {% if vm_states[vm.id] == 'live' %}<h3>Backup</h3>{% if vm.id in latest and latest[vm.id].status == 'running' %}<form class="cancel-backup" method="post" action="/backups/{{ latest[vm.id].id }}/cancel"><button>Cancel active backup</button></form>{% else %}<form method="post" action="/vms/{{ vm.id }}/backups"><button class="backup-now">Back up now</button></form>{% endif %}
-      <h3>Schedule</h3><form class="schedule" method="post" action="/vms/{{ vm.id }}/schedule"><input type="hidden" name="vm_name" value="{{ vm.name }}">
-        {% set s = schedules.get(vm.id) %}<select name="frequency"><option value="disabled" {% if not s or s.frequency == 'disabled' %}selected{% endif %}>Off</option><option value="daily" {% if s and s.frequency == 'daily' %}selected{% endif %}>Daily</option><option value="weekly" {% if s and s.frequency == 'weekly' %}selected{% endif %}>Weekly</option></select>
-        <input aria-label="Hour" name="hour" type="number" min="0" max="23" value="{{ s.hour if s else 2 }}"><span>:</span><input aria-label="Minute" name="minute" type="number" min="0" max="59" value="{{ s.minute if s else 0 }}">
-        <select aria-label="Weekday" name="weekday"><option value="0" {% if s and s.weekday == 0 %}selected{% endif %}>Mon</option><option value="1" {% if s and s.weekday == 1 %}selected{% endif %}>Tue</option><option value="2" {% if s and s.weekday == 2 %}selected{% endif %}>Wed</option><option value="3" {% if s and s.weekday == 3 %}selected{% endif %}>Thu</option><option value="4" {% if s and s.weekday == 4 %}selected{% endif %}>Fri</option><option value="5" {% if s and s.weekday == 5 %}selected{% endif %}>Sat</option><option value="6" {% if s and s.weekday == 6 %}selected{% endif %}>Sun</option></select>
-        <button>Save</button>{% if s and s.next_run_at %}<small>Next {{ s.next_run_at.strftime('%Y-%m-%d %H:%M') }}</small>{% endif %}</form>{% else %}<small class="muted">Open VM details or use its recovery point below to restore it.</small>{% endif %}
+      <h3>Schedule</h3><a href="/schedules">Manage schedule policies</a>{% else %}<small class="muted">Open VM details or use its recovery point below to restore it.</small>{% endif %}
       {% set recovery = latest_recovery.get(vm.id) %}{% if recovery %}{% set menu_ova = ova_exports.get(recovery.id) %}<h3>Recovery</h3>{% if menu_ova and menu_ova.status == 'running' %}<span class="running">Packaging OVA {{ menu_ova.progress }}%</span>{% elif menu_ova and menu_ova.status == 'success' %}<a href="/backups/{{ recovery.id }}/ova">Download OVA</a>{% else %}<form method="post" action="/backups/{{ recovery.id }}/ova"><button>Build OVA</button></form>{% endif %}<br><button type="button" class="restore-open" data-backup-id="{{ recovery.id }}" data-vm-name="{{ vm.name }}">Restore to ESXi</button>{% endif %}
       {% if vm.id in repository_vm_ids %}<h3>Repository</h3><form class="delete-backups" method="post" action="/repository/vms/{{ vm.id }}/delete" data-vm-name="{{ vm.name }}"><button type="submit">Remove all backups</button></form>{% endif %}
     </div></details></td></tr>{% if vm.id in latest and latest[vm.id].status == 'running' %}{% set run = latest[vm.id] %}{% set expected = run.expected_bytes|default(vm.provisioned_bytes, true) %}{% set estimated_progress = ([94, (run.logical_bytes * 95 / expected)|int]|min) if expected else run.progress %}<tr class="backup-progress-row" data-progress-for="{{ vm.id }}"><td colspan="7"><details class="backup-strip" data-backup-id="{{ run.id }}"><summary><span class="running-icon" aria-hidden="true">↻</span><div class="run-bar{% if not expected %} indeterminate{% endif %}"><span{% if expected %} style="width:{{ estimated_progress }}%"{% endif %}></span></div><span class="run-summary">{{ run.phase|replace(' (size unavailable)', '') }}{% if run.current_file %} · {{ run.current_file }}{% endif %} · {{ bytes(run.logical_bytes) }}{% if run.throughput_mib_s %} · {{ '%.1f'|format(run.throughput_mib_s) }} MiB/s{% endif %} · <span class="elapsed" data-start="{{ run.started_at.isoformat() }}">calculating…</span>{% if expected %} · <span class="remaining" data-expected="{{ expected }}" data-transferred="{{ run.logical_bytes }}" data-rate="{{ run.throughput_mib_s }}">estimating…</span> left{% endif %}</span></summary><div class="run-expanded"><div class="run-stat"><small>Active for</small><strong class="elapsed" data-start="{{ run.started_at.isoformat() }}">calculating…</strong></div><div class="run-stat"><small>Estimated remaining</small><strong>{% if expected %}<span class="remaining" data-expected="{{ expected }}" data-transferred="{{ run.logical_bytes }}" data-rate="{{ run.throughput_mib_s }}">estimating…</span>{% else %}Unknown{% endif %}</strong></div><div class="run-stat"><small>Transferred / estimated</small><strong>{{ bytes(run.logical_bytes) }} / {{ bytes(expected) if expected else 'Unknown' }}</strong></div><div class="run-stat"><small>Throughput</small><strong>{{ '%.1f'|format(run.throughput_mib_s) }} MiB/s</strong></div><div class="run-stat"><small>Current artifact</small><strong>{{ run.current_file or 'Preparing' }}</strong></div><div class="run-chart"><small>Throughput history</small><svg class="throughput-chart" data-rate="{{ run.throughput_mib_s }}" data-backup-id="{{ run.id }}" viewBox="0 0 200 42" preserveAspectRatio="none"><polyline points=""></polyline></svg></div><div class="run-chart"><small>Transfer completion{% if expected %} · estimated {{ estimated_progress }}%{% else %} · total unknown{% endif %}</small><div class="run-bar{% if not expected %} indeterminate{% endif %}"><span{% if expected %} style="width:{{ estimated_progress }}%"{% endif %}></span></div></div></div></details></td></tr>{% endif %}{% else %}<tr><td colspan="7">No VMs or recovery points available.</td></tr>{% endfor %}
@@ -157,6 +154,15 @@
         ).join(' '));
       });
     }
+    function enhanceOvaProgress() {
+      document.querySelectorAll('.running').forEach(label => {
+        const match = label.textContent.match(/Packaging(?: OVA)?\s+(\d+)%/);
+        if (!match || label.nextElementSibling?.classList.contains('ova-progress')) return;
+        const bar = document.createElement('div'); bar.className = 'bar ova-progress';
+        const fill = document.createElement('span'); fill.style.width = match[1] + '%';
+        bar.append(fill); label.after(bar);
+      });
+    }
     document.addEventListener('toggle', event => {
       const panel = event.target.closest?.('.backup-strip');
       if (!panel) return;
@@ -179,6 +185,7 @@
     localizeTimes();
     applyVmSort();
     updateBackupPanels();
+    enhanceOvaProgress();
     async function refreshDashboard() {
       if (refreshing || document.hidden) return;
       refreshing = true;
@@ -195,6 +202,7 @@
         localizeTimes();
         applyVmSort();
         updateBackupPanels();
+        enhanceOvaProgress();
         const nextStats = next.getElementById('stats');
         if (nextStats) document.getElementById('stats').childNodes[0].textContent =
           nextStats.textContent.replace(/updated.*$/, 'updated ');

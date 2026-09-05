@@ -84,7 +84,7 @@ class BackupService:
             backup["ova"] = export.model_dump(mode="json") if export else None
         return details
 
-    def backup(self, identity: str) -> BackupRecord:
+    def backup(self, identity: str, quiesce: bool | None = None) -> BackupRecord:
         backup_id = uuid.uuid4().hex
         with self.client_factory(self.config.server) as client:
             vm = client.find_vm(identity)
@@ -113,7 +113,8 @@ class BackupService:
                         expected_bytes=virtual,
                     )
                     snapshot = client.create_snapshot(
-                        vm, f"esxi-backup-{backup_id[:8]}", self.config.quiesce
+                        vm, f"esxi-backup-{backup_id[:8]}",
+                        self.config.quiesce if quiesce is None else quiesce,
                     )
                     export_source = snapshot
                 files = []

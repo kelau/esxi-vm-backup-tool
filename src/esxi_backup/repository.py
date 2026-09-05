@@ -17,7 +17,14 @@ from typing import BinaryIO
 
 import zstandard
 
-from .models import BackupRecord, BackupSchedule, BackupStatus, OvaExportRecord, RestoreRecord
+from .models import (
+    BackupRecord,
+    BackupSchedule,
+    BackupStatus,
+    OvaExportRecord,
+    RestoreRecord,
+    SchedulePolicy,
+)
 
 
 def synchronized_db(method):
@@ -87,6 +94,12 @@ class BackupRepository:
                 vm_id TEXT PRIMARY KEY, vm_name TEXT NOT NULL,
                 frequency TEXT NOT NULL, hour INTEGER NOT NULL,
                 minute INTEGER NOT NULL, weekday INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS schedule_policies (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, vm_ids TEXT NOT NULL,
+                frequency TEXT NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL,
+                weekday INTEGER NOT NULL DEFAULT 0, quiesce INTEGER NOT NULL DEFAULT 1,
+                build_ova INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS ova_exports (
                 backup_id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -417,6 +430,34 @@ class BackupRepository:
         return BackupSchedule.model_validate(dict(row)) if row else None
 
     @synchronized_db
+    def save_schedule_policy(self, schedule: SchedulePolicy) -> None:
+        self.db.execute(
+            """INSERT INTO schedule_policies
+               (id,name,vm_ids,frequency,hour,minute,weekday,quiesce,build_ova)
+               VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+               name=excluded.name,vm_ids=excluded.vm_ids,frequency=excluded.frequency,
+               hour=excluded.hour,minute=excluded.minute,weekday=excluded.weekday,
+               quiesce=excluded.quiesce,build_ova=excluded.build_ova""",
+            (schedule.id, schedule.name, json.dumps(schedule.vm_ids), schedule.frequency,
+             schedule.hour, schedule.minute, schedule.weekday, schedule.quiesce,
+             schedule.build_ova),
+        )
+        self.db.commit()
+
+    @synchronized_db
+    def list_schedule_policies(self) -> list[SchedulePolicy]:
+        rows = self.db.execute("SELECT * FROM schedule_policies ORDER BY name").fetchall()
+        return [SchedulePolicy.model_validate({
+            **dict(row), "vm_ids": json.loads(row["vm_ids"]),
+            "quiesce": bool(row["quiesce"]), "build_ova": bool(row["build_ova"]),
+        }) for row in rows]
+
+    @synchronized_db
+    def delete_schedule_policy(self, schedule_id: str) -> None:
+        self.db.execute("DELETE FROM schedule_policies WHERE id=?", (schedule_id,))
+        self.db.commit()
+
+    @synchronized_db
     def start_ova_export(self, backup_id: str) -> None:
         now = datetime.now(UTC).isoformat()
         self.db.execute(
@@ -533,6 +574,11 @@ class BackupRepository:
         )
         self.db.execute("DELETE FROM backups WHERE vm_id=?", (vm_id,))
         self.db.execute("DELETE FROM schedules WHERE vm_id=?", (vm_id,))
+        for policy in self.list_schedule_policies():
+            if vm_id in policy.vm_ids:
+                self.save_schedule_policy(policy.model_copy(update={
+                    "vm_ids": [item for item in policy.vm_ids if item != vm_id]
+                }))
 
         referenced = set()
         manifest_bytes = 0

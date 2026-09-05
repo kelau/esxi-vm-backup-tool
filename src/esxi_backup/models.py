@@ -85,6 +85,19 @@ class BackupSchedule(BaseModel):
     next_run_at: datetime | None = None
 
 
+class SchedulePolicy(BaseModel):
+    id: str
+    name: str
+    vm_ids: list[str] = Field(default_factory=list)
+    frequency: Literal["disabled", "daily", "weekly"] = "daily"
+    hour: Annotated[int, Field(ge=0, le=23)] = 2
+    minute: Annotated[int, Field(ge=0, le=59)] = 0
+    weekday: Annotated[int, Field(ge=0, le=6)] = 0
+    quiesce: bool = True
+    build_ova: bool = False
+    next_run_at: datetime | None = None
+
+
 class OvaExportRecord(BaseModel):
     backup_id: str
     status: BackupStatus

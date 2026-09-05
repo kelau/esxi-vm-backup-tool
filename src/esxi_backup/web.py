@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,11 +10,19 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.templating import Jinja2Templates
 
 from .config import load_config, resolve_config_path, save_config
-from .models import AppConfig, BackupSchedule, RetentionConfig, ServerConfig, VMInfo
+from .models import (
+    AppConfig,
+    BackupSchedule,
+    RetentionConfig,
+    SchedulePolicy,
+    ServerConfig,
+    VMInfo,
+)
 from .scheduler import BackupScheduler
 from .service import BackupService
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+optional_vm_ids = Form(default=None)
 
 
 def create_app(config_path: Path | None = None) -> FastAPI:
@@ -111,7 +121,39 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/schedules")
     def api_schedules():
-        return app.state.scheduler.schedules()
+        return app.state.scheduler.policies()
+
+    @app.get("/schedules", response_class=HTMLResponse)
+    def schedules_page(request: Request):
+        try:
+            vms = app.state.service.list_vms()
+            error = None
+        except Exception as exc:
+            vms, error = [], str(exc)
+        return templates.TemplateResponse(request, "schedules.html", {
+            "schedules": app.state.scheduler.policies(), "vms": vms, "error": error,
+        })
+
+    @app.post("/schedules")
+    def save_schedule_policy(
+        name: str = Form(), vm_ids: list[str] | None = optional_vm_ids,
+        schedule_id: str = Form(default=""), frequency: str = Form(default="daily"),
+        hour: int = Form(default=2), minute: int = Form(default=0),
+        weekday: int = Form(default=0), quiesce: bool = Form(default=False),
+        build_ova: bool = Form(default=False),
+    ):
+        schedule = SchedulePolicy(
+            id=schedule_id or uuid.uuid4().hex, name=name.strip(), vm_ids=vm_ids or [],
+            frequency=frequency, hour=hour, minute=minute, weekday=weekday,
+            quiesce=quiesce, build_ova=build_ova,
+        )
+        app.state.scheduler.apply_policy(schedule)
+        return RedirectResponse("/schedules", status_code=303)
+
+    @app.post("/schedules/{schedule_id}/delete")
+    def delete_schedule_policy(schedule_id: str):
+        app.state.scheduler.delete_policy(schedule_id)
+        return RedirectResponse("/schedules", status_code=303)
 
     @app.put("/api/v1/vms/{vm_id}/schedule")
     def api_schedule(vm_id: str, schedule: BackupSchedule):
@@ -276,7 +318,15 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         exports_root = (app.state.service.repository.root / "exports").resolve()
         if exports_root not in path.parents or not path.is_file():
             return JSONResponse(status_code=404, content={"detail": "OVA not available"})
-        return FileResponse(path, filename=path.name, media_type="application/x-virtualization-ova")
+        backup = next(
+            (item for item in app.state.service.repository.list() if item.id == backup_id), None
+        )
+        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", backup.vm_name).strip(". ") \
+            if backup else backup_id
+        return FileResponse(
+            path, filename=f"{safe_name or backup_id}.ova",
+            media_type="application/x-virtualization-ova",
+        )
 
     @app.post("/backups/{backup_id}/restore-to-esxi")
     def restore_backup(
