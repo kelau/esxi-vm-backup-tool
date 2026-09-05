@@ -117,11 +117,15 @@ class BackupService:
                     )
                     export_source = snapshot
                 files = []
+                clone_started = time.monotonic()
                 def report_preparation(done: int, total: int, current: str) -> None:
                     percent = min(24, max(2, int(done * 24 / total))) if total else 2
+                    elapsed = max(time.monotonic() - clone_started, 0.001)
                     self.repository.update_progress(
                         backup_id, progress=percent, phase="preparing hot clone",
-                        current_file=current, expected_bytes=total or virtual,
+                        current_file=current, logical_bytes=done,
+                        expected_bytes=total or virtual,
+                        throughput_mib_s=done / 1048576 / elapsed,
                     )
 
                 export_context = (
