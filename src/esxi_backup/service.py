@@ -117,8 +117,15 @@ class BackupService:
                     )
                     export_source = snapshot
                 files = []
+                def report_preparation(done: int, total: int, current: str) -> None:
+                    percent = min(24, max(2, int(done * 24 / total))) if total else 2
+                    self.repository.update_progress(
+                        backup_id, progress=percent, phase="preparing hot clone",
+                        current_file=current, expected_bytes=total or virtual,
+                    )
+
                 export_context = (
-                    client.export_hot(export_source, backup_id)
+                    client.export_hot(export_source, backup_id, report_preparation)
                     if snapshot is not None else client.export(export_source)
                 )
                 with export_context as (lease, exports):
@@ -173,7 +180,14 @@ class BackupService:
                                         )
                                     else:
                                         weighted_progress = 0
-                                    percent = min(95, max(2, int(weighted_progress * 95)))
+                                    start = 25 if lease is None else 2
+                                    percent = min(
+                                        95,
+                                        max(
+                                            start,
+                                            int(start + weighted_progress * (95 - start)),
+                                        ),
+                                    )
                                     elapsed = max(time.monotonic() - transfer_started, 0.001)
                                     throughput = total_transferred / 1048576 / elapsed
                                     if lease is not None:

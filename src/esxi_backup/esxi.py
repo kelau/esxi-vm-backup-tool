@@ -6,6 +6,7 @@ import re
 import shlex
 import socket
 import ssl
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -291,15 +292,25 @@ class EsxiClient:
             raise ValueError(f"Unsupported VMDK backing path: {backing}")
         return match.group(1), match.group(2)
 
-    def _run_ssh(self, command: str) -> None:
+    def _run_ssh(self, command: str, on_poll=None) -> None:
         _stdin, stdout, stderr = self.ssh.exec_command(command, timeout=3600)
+        error_output = bytearray()
+        while not stdout.channel.exit_status_ready():
+            if on_poll:
+                on_poll()
+            while stdout.channel.recv_ready():
+                stdout.channel.recv(65536)
+            while stdout.channel.recv_stderr_ready():
+                error_output.extend(stdout.channel.recv_stderr(65536))
+            time.sleep(1)
         status = stdout.channel.recv_exit_status()
         if status:
-            message = stderr.read().decode("utf-8", "replace").strip()
+            error_output.extend(stderr.read())
+            message = error_output.decode("utf-8", "replace").strip()
             raise RuntimeError(f"ESXi vmkfstools failed: {message or f'exit {status}'}")
 
     @contextmanager
-    def export_snapshot_ssh(self, snapshot, backup_id: str):
+    def export_snapshot_ssh(self, snapshot, backup_id: str, on_prepare=None):
         ssh = self._connect_ssh()
         sftp = ssh.open_sftp()
         created: list[str] = []
@@ -313,6 +324,8 @@ class EsxiClient:
             ]
             if not disks:
                 raise RuntimeError("The snapshot contains no exportable virtual disks.")
+            total_capacity = sum(int(getattr(disk, "capacityInBytes", 0)) for disk in disks)
+            completed_capacity = 0
             for index, disk in enumerate(disks, start=1):
                 datastore, relative = self._datastore_path(disk.backing.fileName)
                 directory = f"/vmfs/volumes/{datastore}/.esxi-backup-{backup_id}"
@@ -321,11 +334,31 @@ class EsxiClient:
                     directories.add(directory)
                 source = f"/vmfs/volumes/{datastore}/{relative}"
                 destination = f"{directory}/disk-{index:02d}.vmdk"
+                prefix = f"disk-{index:02d}"
+
+                def report_clone_progress(
+                    directory=directory, prefix=prefix,
+                    completed_capacity=completed_capacity, index=index,
+                ):
+                    if not on_prepare:
+                        return
+                    current = sum(
+                        int(item.st_size) for item in sftp.listdir_attr(directory)
+                        if item.filename == f"{prefix}.vmdk"
+                        or item.filename.startswith(f"{prefix}-s")
+                    )
+                    on_prepare(
+                        min(total_capacity, completed_capacity + current),
+                        total_capacity,
+                        f"Disk {index} of {len(disks)}",
+                    )
+
                 self._run_ssh(
                     "vmkfstools -i " + shlex.quote(source) + " "
-                    + shlex.quote(destination) + " -d 2gbsparse"
+                    + shlex.quote(destination) + " -d 2gbsparse",
+                    report_clone_progress,
                 )
-                prefix = f"disk-{index:02d}"
+                completed_capacity += int(getattr(disk, "capacityInBytes", 0))
                 clone_paths = sorted(
                     f"{directory}/{item.filename}"
                     for item in sftp.listdir_attr(directory)
@@ -357,12 +390,12 @@ class EsxiClient:
             sftp.close()
 
     @contextmanager
-    def export_hot(self, snapshot, backup_id: str):
+    def export_hot(self, snapshot, backup_id: str, on_prepare=None):
         try:
             with self.export(snapshot) as result:
                 yield result
         except SnapshotExportUnsupported:
-            with self.export_snapshot_ssh(snapshot, backup_id) as result:
+            with self.export_snapshot_ssh(snapshot, backup_id, on_prepare) as result:
                 yield result
 
     def open_export(self, url: str):
