@@ -147,29 +147,37 @@ class EsxiClient:
         wait_for_task(snapshot.RemoveSnapshot_Task(removeChildren=False))
 
     @contextmanager
-    def export(self, vm) -> Iterator[tuple[object, list[ExportFile]]]:
-        lease = vm.ExportVm()
-        while lease.state == vim.HttpNfcLease.State.initializing:
-            pass
-        if lease.state == vim.HttpNfcLease.State.error:
-            raise lease.error
-        files = []
-        disk_number = 0
-        for index, device in enumerate(lease.info.deviceUrl, start=1):
-            if getattr(device, "disk", False):
-                disk_number += 1
-                fallback_name = f"disk-{disk_number:02d}.vmdk"
-            elif "nvram" in str(getattr(device, "importKey", "")).lower():
-                fallback_name = "vm.nvram"
-            else:
-                fallback_name = f"artifact-{index:02d}.bin"
-            files.append(ExportFile(
-                str(getattr(device, "targetId", None) or fallback_name),
-                device.url.replace("*", self.config.host),
-                int(device.fileSize or 0),
-                str(getattr(device, "key", None) or getattr(device, "importKey", index)),
-            ))
+    def export(self, source) -> Iterator[tuple[object, list[ExportFile]]]:
+        """Export a snapshot for hot backup, or a powered-off VM when requested directly."""
         try:
+            export_snapshot = getattr(source, "ExportSnapshot", None)
+            lease = export_snapshot() if export_snapshot else source.ExportVm()
+        except vim.fault.InvalidState as exc:
+            raise RuntimeError(
+                "ESXi refused the export because the VM or snapshot is not in an "
+                "exportable state. Check that its configuration and datastore are accessible."
+            ) from exc
+        try:
+            while lease.state == vim.HttpNfcLease.State.initializing:
+                pass
+            if lease.state == vim.HttpNfcLease.State.error:
+                raise lease.error
+            files = []
+            disk_number = 0
+            for index, device in enumerate(lease.info.deviceUrl, start=1):
+                if getattr(device, "disk", False):
+                    disk_number += 1
+                    fallback_name = f"disk-{disk_number:02d}.vmdk"
+                elif "nvram" in str(getattr(device, "importKey", "")).lower():
+                    fallback_name = "vm.nvram"
+                else:
+                    fallback_name = f"artifact-{index:02d}.bin"
+                files.append(ExportFile(
+                    str(getattr(device, "targetId", None) or fallback_name),
+                    device.url.replace("*", self.config.host),
+                    int(device.fileSize or 0),
+                    str(getattr(device, "key", None) or getattr(device, "importKey", index)),
+                ))
             yield lease, files
             lease.HttpNfcLeaseComplete()
         except Exception:

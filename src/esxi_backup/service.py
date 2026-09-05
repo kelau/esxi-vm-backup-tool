@@ -26,7 +26,22 @@ class BackupService:
             Path(config.repository), config.chunk_size_mib * 1024 * 1024, config.compression_level
         )
         self._cancel_events: dict[str, threading.Event] = {}
+        self._active_vm_ids: set[str] = set()
         self._cancel_lock = threading.Lock()
+
+    def _begin_backup(self, backup_id: str, vm_id: str, vm_name: str) -> threading.Event:
+        with self._cancel_lock:
+            if vm_id in self._active_vm_ids:
+                raise RuntimeError(f"A backup is already running for {vm_name}.")
+            event = threading.Event()
+            self._active_vm_ids.add(vm_id)
+            self._cancel_events[backup_id] = event
+            return event
+
+    def _end_backup(self, backup_id: str, vm_id: str) -> None:
+        with self._cancel_lock:
+            self._cancel_events.pop(backup_id, None)
+            self._active_vm_ids.discard(vm_id)
 
     def cancel_backup(self, backup_id: str) -> bool:
         with self._cancel_lock:
@@ -73,12 +88,14 @@ class BackupService:
         backup_id = uuid.uuid4().hex
         with self.client_factory(self.config.server) as client:
             vm = client.find_vm(identity)
+            cancel_event = self._begin_backup(backup_id, vm._moId, vm.name)
             record = BackupRecord(id=backup_id, vm_id=vm._moId, vm_name=vm.name,
                                   status=BackupStatus.RUNNING)
-            self.repository.create(record)
-            cancel_event = threading.Event()
-            with self._cancel_lock:
-                self._cancel_events[backup_id] = cancel_event
+            try:
+                self.repository.create(record)
+            except Exception:
+                self._end_backup(backup_id, vm._moId)
+                raise
             snapshot = None
             successful = False
             logical = stored = 0
@@ -96,7 +113,7 @@ class BackupService:
                     vm, f"esxi-backup-{backup_id[:8]}", self.config.quiesce
                 )
                 files = []
-                with client.export(vm) as (lease, exports):
+                with client.export(snapshot) as (lease, exports):
                     ovf_descriptor = client.create_ovf_descriptor(vm, exports)
                     export_count = max(1, len(exports))
                     total_transferred = 0
@@ -200,8 +217,7 @@ class BackupService:
                 self.repository.cancel(backup_id)
             except Exception as exc:
                 self.repository.fail(backup_id, str(exc))
-                with self._cancel_lock:
-                    self._cancel_events.pop(backup_id, None)
+                self._end_backup(backup_id, vm._moId)
                 raise
             finally:
                 if snapshot is not None:
@@ -212,8 +228,7 @@ class BackupService:
                     try:
                         client.remove_snapshot(snapshot)
                     except Exception as cleanup_error:
-                        with self._cancel_lock:
-                            self._cancel_events.pop(backup_id, None)
+                        self._end_backup(backup_id, vm._moId)
                         if successful:
                             self.repository.fail(
                                 backup_id, f"Snapshot cleanup failed: {cleanup_error}"
@@ -229,8 +244,7 @@ class BackupService:
                     backup_id, logical=logical, stored=stored,
                     repository_bytes=sum(referenced.values()), virtual=virtual,
                 )
-            with self._cancel_lock:
-                self._cancel_events.pop(backup_id, None)
+            self._end_backup(backup_id, vm._moId)
         return self.repository.list(record.vm_id)[0]
 
     def restore(self, backup_id: str, destination: Path) -> list[Path]:

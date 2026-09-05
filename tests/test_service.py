@@ -52,7 +52,8 @@ class FakeClient:
         FakeClient.removed = True
 
     @contextmanager
-    def export(self, _vm):
+    def export(self, snapshot):
+        assert snapshot is not self.vm
         yield FakeLease(), [SimpleNamespace(
             name="disk.vmdk", url="memory://disk", size=12, device_id="disk-1"
         )]
@@ -125,6 +126,14 @@ def test_backup_can_be_cancelled_and_still_removes_snapshot(tmp_path):
 def test_list_vms(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     assert service.list_vms()[0].name == "mail"
+
+
+def test_duplicate_backup_for_same_vm_is_rejected(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    service._begin_backup("existing", "vm-42", "mail")
+
+    with pytest.raises(RuntimeError, match="already running for mail"):
+        service.backup("mail")
 
 
 def test_restore_maps_esxi_device_keys_to_portable_names(tmp_path):
