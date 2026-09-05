@@ -282,7 +282,10 @@
     }
     document.addEventListener('click', event => {
       const row = event.target.closest('.vm-row');
-      if (row && !event.target.closest('.actions')) showVmDetails(row.dataset.vmId);
+      const interactive = event.target.closest(
+        'a, button, input, select, textarea, form, details, summary'
+      );
+      if (row && !interactive) showVmDetails(row.dataset.vmId);
     });
     document.querySelector('.modal-close').addEventListener('click', () => modal.close());
     modal.addEventListener('click', event => { if (event.target === modal) modal.close(); });

@@ -73,7 +73,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.5.2" in response.text
+    assert "v0.5.3" in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
     assert "refreshDashboard" in response.text
@@ -81,6 +81,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "Actions for demo" in response.text
     assert "details.actions[open]" in response.text
     assert "showVmDetails" in response.text
+    assert "if (row && !interactive) showVmDetails" in response.text
     assert "error-brief" in response.text
     assert "Total repository" in response.text
     assert "menu.removeAttribute('open')" in response.text

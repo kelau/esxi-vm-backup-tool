@@ -147,7 +147,7 @@ Tests use an in-memory ESXi adapter and do not require a hypervisor. See
 
 ## Versioning
 
-The project follows semantic versioning and is currently pre-1.0. Version `0.5.2` marks the first
+The project follows semantic versioning and is currently pre-1.0. Version `0.5.2` marked the first
 52-commit development milestone. From this baseline, feature releases increment the minor version,
 fix-only releases increment the patch version, and `1.0.0` will mark a stable repository format and
 supported upgrade path. Run `esxi-backup --version` to see the installed version.
