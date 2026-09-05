@@ -1,7 +1,23 @@
 from types import SimpleNamespace
 
-from esxi_backup.esxi import EsxiClient
+from esxi_backup.esxi import EsxiClient, media_health
 from esxi_backup.models import ServerConfig
+
+
+def test_media_health_uses_wear_and_fault_counters():
+    healthy = media_health({
+        "Health Status": ["OK"], "Media Wearout Indicator": ["93", "0", "93", "114"],
+        "Reallocated Sector Count": ["100", "10", "100", "0"],
+    })
+    damaged = media_health({
+        "Health Status": ["OK"], "Pending Sector Reallocation Count": ["99", "0", "99", "2"],
+    })
+
+    assert healthy == {
+        "score": 93, "label": "Healthy", "notes": ["Media wear indicator: 93%"]
+    }
+    assert damaged["score"] == 73
+    assert damaged["label"] == "Watch"
 
 
 def test_inventory_tolerates_vm_without_config():

@@ -61,6 +61,7 @@ class FakeClient:
                 "serial_number": "SERIAL", "ssd": True, "local_disk": True,
                 "operational_state": ["ok"], "capacity_bytes": 1000,
                 "smart": {"Health Status": ["OK"]}, "smart_error": None,
+                "media_health": {"score": 100, "label": "Healthy", "notes": []},
             }],
         }
 
@@ -92,7 +93,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.6.0" in response.text
+    assert "v0.6.1" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -169,6 +170,7 @@ def test_datastores_page_persists_inventory_snapshot(tmp_path, monkeypatch):
     assert "datastore1" in response.text
     assert "Test SSD" in response.text
     assert "Health Status" in response.text
+    assert "Healthy media health" in response.text
     assert "demo" in response.text
     assert service.repository.latest_storage_snapshot()["host"] == "esxi.test"
 

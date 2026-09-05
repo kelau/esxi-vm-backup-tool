@@ -46,6 +46,60 @@ class SnapshotExportUnsupported(RuntimeError):
     pass
 
 
+def media_health(smart: dict[str, list[str]]) -> dict:
+    """Derive a conservative, explainable media score from ESXi SMART rows."""
+    if not smart:
+        return {"score": None, "label": "Unknown", "notes": ["SMART data unavailable"]}
+
+    def number(value: str, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    score = 100
+    notes = []
+    health = smart.get("Health Status", ["Unknown"])[0].upper()
+    if health not in {"OK", "PASSED", "PASS"}:
+        score = min(score, 20)
+        notes.append(f"SMART health status is {health.title()}")
+    wear = smart.get("Media Wearout Indicator")
+    if wear:
+        remaining = max(0, min(100, number(wear[0], 100)))
+        score = min(score, remaining)
+        notes.append(f"Media wear indicator: {remaining}%")
+    severe = {
+        "Pending Sector Reallocation Count", "Uncorrectable Sector Count",
+        "Uncorrectable Error Count",
+    }
+    reallocations = {"Reallocated Sector Count", "Sector Reallocation Event Count"}
+    errors = {
+        "Program Fail Count", "Erase Fail Count", "Read Error Count", "Write Error Count",
+    }
+    for name in severe | reallocations | errors:
+        values = smart.get(name)
+        if not values:
+            continue
+        normalized = number(values[0], 100)
+        threshold = number(values[1], 0) if len(values) > 1 else 0
+        raw = number(values[-1], 0)
+        if threshold and normalized <= threshold:
+            score = min(score, 20)
+            notes.append(f"{name} reached its SMART threshold")
+        if raw <= 0:
+            continue
+        penalty = min(60, 25 + raw) if name in severe else (
+            min(40, 10 + raw) if name in reallocations else min(25, 5 + raw)
+        )
+        score -= penalty
+        notes.append(f"{name}: {raw}")
+    score = max(0, min(100, score))
+    label = "Healthy" if score >= 90 else "Watch" if score >= 70 else (
+        "Warning" if score >= 40 else "Critical"
+    )
+    return {"score": score, "label": label, "notes": notes or ["No media faults reported"]}
+
+
 def ssh_fingerprint(key) -> str:
     digest = hashlib.sha256(key.asbytes()).digest()
     return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
@@ -247,6 +301,8 @@ class EsxiClient:
                         }
                     except Exception as exc:
                         device["smart_error"] = str(exc)
+        for device in devices.values():
+            device["media_health"] = media_health(device["smart"])
         return {"host": self.config.host, "datastores": list(datastores.values()),
                 "devices": list(devices.values())}
 
