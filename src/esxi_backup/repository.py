@@ -39,9 +39,10 @@ def synchronized_db(method):
 class ChunkStream(io.RawIOBase):
     """Readable stream over verified repository chunks without materializing a full file."""
 
-    def __init__(self, chunks):
+    def __init__(self, chunks, on_read: Callable[[int], None] | None = None):
         super().__init__()
         self._chunks = iter(chunks)
+        self._on_read = on_read
         self._buffer = bytearray()
         self._finished = False
 
@@ -57,6 +58,8 @@ class ChunkStream(io.RawIOBase):
         count = min(len(destination), len(self._buffer))
         destination[:count] = self._buffer[:count]
         del self._buffer[:count]
+        if count and self._on_read:
+            self._on_read(count)
         return count
 
 
@@ -404,8 +407,10 @@ class BackupRepository:
                 raise OSError(f"Chunk integrity failure: {digest}")
             yield data
 
-    def open_chunk_stream(self, chunks: Iterable[dict]) -> io.BufferedReader:
-        return io.BufferedReader(ChunkStream(self.iter_chunks(chunks)))
+    def open_chunk_stream(
+        self, chunks: Iterable[dict], on_read: Callable[[int], None] | None = None,
+    ) -> io.BufferedReader:
+        return io.BufferedReader(ChunkStream(self.iter_chunks(chunks), on_read))
 
     @synchronized_db
     def save_schedule(self, schedule: BackupSchedule) -> None:

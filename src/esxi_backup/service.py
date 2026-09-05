@@ -346,6 +346,19 @@ class BackupService:
                 archive.addfile(ovf_info, io.BytesIO(descriptor_bytes))
                 total = sum(int(file["size"]) for file in manifest["files"]) or 1
                 written = 0
+                last_progress = 0.0
+                last_update = 0.0
+
+                def report_progress(count: int, *, force: bool = False) -> None:
+                    nonlocal written, last_progress, last_update
+                    written += count
+                    progress = min(99.9, round(written * 100 / total, 1))
+                    now = time.monotonic()
+                    if force or (progress > last_progress and now - last_update >= 0.5):
+                        self.repository.update_ova_export(backup_id, progress)
+                        last_progress = progress
+                        last_update = now
+
                 for file in manifest["files"]:
                     member_name = str(file["name"])
                     if PurePosixPath(member_name).name != member_name:
@@ -353,12 +366,11 @@ class BackupService:
                     info = tarfile.TarInfo(member_name)
                     info.size = int(file["size"])
                     info.mtime = 0
-                    with self.repository.open_chunk_stream(file["chunks"]) as stream:
+                    with self.repository.open_chunk_stream(
+                        file["chunks"], on_read=report_progress
+                    ) as stream:
                         archive.addfile(info, stream)
-                    written += int(file["size"])
-                    self.repository.update_ova_export(
-                        backup_id, round(written * 100 / total, 1)
-                    )
+                    report_progress(0, force=True)
             temporary.replace(destination)
         except Exception:
             temporary.unlink(missing_ok=True)

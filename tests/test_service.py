@@ -234,3 +234,14 @@ def test_export_ova_streams_verified_files(tmp_path):
     with tarfile.open(output) as archive:
         assert archive.getnames() == ["mail.ovf", "disk-01.vmdk"]
         assert archive.extractfile("disk-01.vmdk").read() == b"virtual-disk"
+
+
+def test_chunk_stream_reports_bytes_as_they_are_read(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    chunks, _, _ = service.repository.store_stream(BytesIO(b"virtual-disk"))
+    reads = []
+
+    with service.repository.open_chunk_stream(chunks, on_read=reads.append) as stream:
+        assert stream.read() == b"virtual-disk"
+
+    assert sum(reads) == len(b"virtual-disk")
