@@ -139,64 +139,50 @@ class BackupService:
                     )
                     export_count = max(1, len(exports))
                     total_transferred = 0
-                    file_progress = [0.0] * len(exports)
                     file_weights = [max(1, int(item.size or 0)) for item in exports]
                     active_files: set[str] = set()
                     progress_lock = threading.Lock()
                     transfer_started = time.monotonic()
                     expected_total = virtual or sum(file_weights)
+                    last_reported_percent = 0
+                    last_ui_update = 0.0
 
                     def download(file_index, item):
-                        nonlocal total_transferred
+                        nonlocal total_transferred, last_reported_percent, last_ui_update
                         with client.open_export(item.url) as stream:
                             header_size = int(stream.headers.get("Content-Length", 0)) \
                                 if hasattr(stream, "headers") else 0
                             # The lease's device capacity can differ from the actual sparse NFC
                             # stream length. Prefer the HTTP byte count for honest progress.
                             current_size = header_size or item.size
-                            state = {"file_bytes": 0, "last_percent": -1}
                             with progress_lock:
                                 active_files.add(item.name)
-                                if current_size:
-                                    file_weights[file_index] = current_size
 
                             def report(byte_count: int) -> None:
-                                nonlocal total_transferred
+                                nonlocal total_transferred, last_reported_percent, last_ui_update
                                 if cancel_event.is_set():
                                     raise BackupCancelled("Backup cancelled by user")
                                 with progress_lock:
-                                    state["file_bytes"] += byte_count
                                     total_transferred += byte_count
-                                    file_progress[file_index] = (
-                                        min(1.0, state["file_bytes"] / current_size)
-                                        if current_size else 0.0
+                                    weighted_progress = (
+                                        min(1.0, total_transferred / expected_total)
+                                        if expected_total else 0
                                     )
-                                    if current_size:
-                                        weighted_progress = sum(
-                                            fraction * weight
-                                            for fraction, weight in zip(
-                                                file_progress, file_weights, strict=True
-                                            )
-                                        ) / sum(file_weights)
-                                    elif virtual:
-                                        weighted_progress = min(
-                                            1.0, total_transferred / virtual
-                                        )
-                                    else:
-                                        weighted_progress = 0
                                     start = 25 if lease is None else 2
-                                    percent = min(
+                                    calculated_percent = min(
                                         95,
                                         max(
                                             start,
                                             int(start + weighted_progress * (95 - start)),
                                         ),
                                     )
+                                    percent = max(last_reported_percent, calculated_percent)
                                     elapsed = max(time.monotonic() - transfer_started, 0.001)
                                     throughput = total_transferred / 1048576 / elapsed
-                                    if lease is not None:
+                                    if lease is not None and percent > last_reported_percent:
                                         lease.HttpNfcLeaseProgress(percent)
-                                    if percent != state["last_percent"] or current_size == 0:
+                                    now = time.monotonic()
+                                    if percent > last_reported_percent or now-last_ui_update >= 1:
                                         phase = "exporting" if current_size or virtual else \
                                             "exporting (size unavailable)"
                                         current = ", ".join(sorted(active_files))
@@ -209,13 +195,13 @@ class BackupService:
                                             throughput_mib_s=throughput,
                                             expected_bytes=expected_total or None,
                                         )
-                                        state["last_percent"] = percent
+                                        last_ui_update = now
+                                    last_reported_percent = percent
 
                             chunks, file_logical, file_stored = self.repository.store_stream(
                                 stream, on_read=report, workers=self.config.pipeline_workers
                             )
                         with progress_lock:
-                            file_progress[file_index] = 1.0
                             active_files.discard(item.name)
                         return {
                             "name": item.name, "size": file_logical, "chunks": chunks,
