@@ -26,6 +26,7 @@ class FakeClient:
     def __init__(self, _config):
         self.vm = SimpleNamespace(
             _moId="vm-42", name="mail",
+            runtime=SimpleNamespace(powerState="poweredOn"),
             config=SimpleNamespace(hardware=SimpleNamespace(
                 device=[SimpleNamespace(capacityInBytes=1024)]
             )),
@@ -103,6 +104,26 @@ def test_backup_happy_path_and_snapshot_cleanup(tmp_path):
     assert record.virtual_bytes == 1024
     assert FakeClient.removed
     assert (tmp_path / "manifests" / f"{record.id}.json").exists()
+
+
+def test_powered_off_backup_exports_vm_without_snapshot(tmp_path):
+    class ColdClient(FakeClient):
+        def __init__(self, config):
+            super().__init__(config)
+            self.vm.runtime.powerState = "poweredOff"
+
+        def create_snapshot(self, *_args):
+            raise AssertionError("powered-off VM should not be snapshotted")
+
+        @contextmanager
+        def export(self, source):
+            assert source is self.vm
+            yield FakeLease(), [SimpleNamespace(
+                name="disk.vmdk", url="memory://disk", size=12, device_id="disk-1"
+            )]
+
+    service = BackupService(config(tmp_path), client_factory=ColdClient)
+    assert service.backup("mail").status == "success"
 
 
 def test_backup_can_be_cancelled_and_still_removes_snapshot(tmp_path):

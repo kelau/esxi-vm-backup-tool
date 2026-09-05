@@ -10,7 +10,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from pyVim.connect import Disconnect, SmartConnect
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 
 from .models import ServerConfig, VMInfo
 
@@ -152,6 +152,14 @@ class EsxiClient:
         try:
             export_snapshot = getattr(source, "ExportSnapshot", None)
             lease = export_snapshot() if export_snapshot else source.ExportVm()
+        except vmodl.fault.NotSupported as exc:
+            if getattr(source, "ExportSnapshot", None):
+                raise RuntimeError(
+                    "This ESXi endpoint does not support exporting a snapshot. Hot backup "
+                    "requires vCenter snapshot export or the SSH transport; power off the VM "
+                    "to use direct export."
+                ) from exc
+            raise RuntimeError("This ESXi endpoint does not support VM export.") from exc
         except vim.fault.InvalidState as exc:
             raise RuntimeError(
                 "ESXi refused the export because the VM or snapshot is not in an "

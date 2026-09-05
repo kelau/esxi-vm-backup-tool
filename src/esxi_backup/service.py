@@ -105,15 +105,19 @@ class BackupService:
                 for device in (getattr(hardware, "device", None) or [])
             )
             try:
-                self.repository.update_progress(
-                    backup_id, progress=1, phase="creating snapshot",
-                    expected_bytes=virtual,
-                )
-                snapshot = client.create_snapshot(
-                    vm, f"esxi-backup-{backup_id[:8]}", self.config.quiesce
-                )
+                power_state = str(getattr(getattr(vm, "runtime", None), "powerState", ""))
+                export_source = vm
+                if power_state != "poweredOff":
+                    self.repository.update_progress(
+                        backup_id, progress=1, phase="creating snapshot",
+                        expected_bytes=virtual,
+                    )
+                    snapshot = client.create_snapshot(
+                        vm, f"esxi-backup-{backup_id[:8]}", self.config.quiesce
+                    )
+                    export_source = snapshot
                 files = []
-                with client.export(snapshot) as (lease, exports):
+                with client.export(export_source) as (lease, exports):
                     ovf_descriptor = client.create_ovf_descriptor(vm, exports)
                     export_count = max(1, len(exports))
                     total_transferred = 0
