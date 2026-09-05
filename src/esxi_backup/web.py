@@ -35,9 +35,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         except Exception as exc:
             vms, connection_error = [], str(exc)
         backups = app.state.service.repository.list()
+        latest_job = {}
         latest = {}
         for backup in backups:
-            latest.setdefault(backup.vm_id, backup)
+            latest_job.setdefault(backup.vm_id, backup)
+            if backup.status in {"running", "success"}:
+                latest.setdefault(backup.vm_id, backup)
         live_vm_ids = {vm.id for vm in vms}
         vm_states = {
             vm.id: (
@@ -45,7 +48,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             )
             for vm in vms
         }
-        for vm_id, backup in latest.items():
+        for vm_id, backup in latest_job.items():
             if vm_id not in live_vm_ids:
                 vms.append(VMInfo(
                     id=vm_id, name=backup.vm_name, power_state="unavailable",
@@ -79,6 +82,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "repository_stats": repository_stats,
             "vm_states": vm_states,
             "latest_recovery": latest_recovery,
+            "repository_vm_ids": set(latest_job),
         })
 
     @app.get("/api/v1/vms")
