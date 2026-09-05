@@ -45,6 +45,25 @@ class FakeClient:
     def inspect_ssh_host_key(self):
         return "encoded-host-key", "SHA256:test-fingerprint"
 
+    def storage_inventory(self, include_smart=True):
+        return {
+            "host": "esxi.test",
+            "datastores": [{
+                "uuid": "uuid-ds", "name": "datastore1", "type": "VMFS",
+                "url": "/vmfs/volumes/uuid-ds", "accessible": True,
+                "capacity_bytes": 1000, "free_bytes": 400,
+                "devices": ["naa.test"],
+                "vms": [{"id": "vm-1", "name": "demo", "power_state": "poweredOn"}],
+            }],
+            "devices": [{
+                "canonical_name": "naa.test", "display_name": "Test SSD",
+                "vendor": "TEST", "model": "FAST", "revision": "1",
+                "serial_number": "SERIAL", "ssd": True, "local_disk": True,
+                "operational_state": ["ok"], "capacity_bytes": 1000,
+                "smart": {"Health Status": ["OK"]}, "smart_error": None,
+            }],
+        }
+
 
 def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     config = AppConfig(
@@ -73,7 +92,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.5.3" in response.text
+    assert "v0.6.0" in response.text
+    assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
     assert "refreshDashboard" in response.text
@@ -132,6 +152,25 @@ def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["cpu"] == 2
     assert response.json()["backups"] == []
+
+
+def test_datastores_page_persists_inventory_snapshot(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    response = TestClient(create_app()).get("/datastores?refresh=true")
+
+    assert response.status_code == 200
+    assert "datastore1" in response.text
+    assert "Test SSD" in response.text
+    assert "Health Status" in response.text
+    assert "demo" in response.text
+    assert service.repository.latest_storage_snapshot()["host"] == "esxi.test"
 
 
 def test_repository_only_vm_details_do_not_require_esxi_vm(tmp_path, monkeypatch):

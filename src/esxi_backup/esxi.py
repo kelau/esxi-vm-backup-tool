@@ -153,6 +153,103 @@ class EsxiClient:
             ))
         return inventory
 
+    def storage_inventory(self, include_smart: bool = True) -> dict:
+        """Return datastore, extent, device, and VM placement details."""
+        content = self.si.RetrieveContent()
+        view = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.HostSystem], True
+        )
+        try:
+            hosts = list(view.view)
+        finally:
+            view.Destroy()
+        datastores = {}
+        devices = {}
+        for host in hosts:
+            storage = host.configManager.storageSystem
+            luns = list(storage.storageDeviceInfo.scsiLun or [])
+            lun_by_name = {
+                str(getattr(lun, "canonicalName", "")): lun for lun in luns
+            }
+            extents_by_uuid = {}
+            for mount in list(storage.fileSystemVolumeInfo.mountInfo or []):
+                volume = mount.volume
+                volume_uuid = str(getattr(volume, "uuid", ""))
+                extents_by_uuid[volume_uuid] = [
+                    str(extent.diskName)
+                    for extent in list(getattr(volume, "extent", None) or [])
+                ]
+            for datastore in list(host.datastore or []):
+                summary = datastore.summary
+                datastore_uuid = str(summary.url).rstrip("/").split("/")[-1]
+                extent_names = extents_by_uuid.get(datastore_uuid, [])
+                entry = datastores.setdefault(datastore_uuid, {
+                    "uuid": datastore_uuid, "name": summary.name, "type": summary.type,
+                    "url": summary.url, "accessible": bool(summary.accessible),
+                    "capacity_bytes": int(summary.capacity or 0),
+                    "free_bytes": int(summary.freeSpace or 0), "devices": [], "vms": [],
+                })
+                for canonical_name in extent_names:
+                    if canonical_name not in entry["devices"]:
+                        entry["devices"].append(canonical_name)
+                    lun = lun_by_name.get(canonical_name)
+                    if lun and canonical_name not in devices:
+                        capacity = getattr(lun, "capacity", None)
+                        devices[canonical_name] = {
+                            "canonical_name": canonical_name,
+                            "display_name": getattr(lun, "displayName", None),
+                            "vendor": getattr(lun, "vendor", None),
+                            "model": getattr(lun, "model", None),
+                            "revision": getattr(lun, "revision", None),
+                            "serial_number": getattr(lun, "serialNumber", None),
+                            "ssd": getattr(lun, "ssd", None),
+                            "local_disk": getattr(lun, "localDisk", None),
+                            "operational_state": list(
+                                getattr(lun, "operationalState", None) or []
+                            ),
+                            "capacity_bytes": int(
+                                getattr(capacity, "block", 0)
+                                * getattr(capacity, "blockSize", 0)
+                            ),
+                            "smart": {}, "smart_error": None,
+                        }
+        for vm in self._vms():
+            vm_entry = {
+                "id": vm._moId, "name": vm.name,
+                "power_state": str(getattr(vm.runtime, "powerState", "unknown")),
+            }
+            for datastore in list(getattr(vm, "datastore", None) or []):
+                for entry in datastores.values():
+                    if entry["name"] == datastore.name:
+                        entry["vms"].append(vm_entry)
+        if include_smart and devices:
+            if not self.config.ssh_enabled:
+                for device in devices.values():
+                    device["smart_error"] = "Enable trusted SSH to read SMART data."
+            else:
+                ssh = self._connect_ssh()
+                for canonical_name, device in devices.items():
+                    try:
+                        command = "esxcli storage core device smart get -d " + shlex.quote(
+                            canonical_name
+                        )
+                        _stdin, stdout, stderr = ssh.exec_command(command, timeout=30)
+                        output = stdout.read().decode("utf-8", "replace")
+                        error = stderr.read().decode("utf-8", "replace").strip()
+                        status = stdout.channel.recv_exit_status()
+                        if status:
+                            raise RuntimeError(error or f"esxcli exited with {status}")
+                        lines = [line.strip() for line in output.splitlines() if line.strip()]
+                        device["smart"] = {
+                            parts[0]: parts[1:]
+                            for line in lines[1:]
+                            if len(parts := re.split(r"\s{2,}", line)) >= 2
+                        }
+                    except Exception as exc:
+                        device["smart_error"] = str(exc)
+        return {"host": self.config.host, "datastores": list(datastores.values()),
+                "devices": list(devices.values())}
+
     def find_vm(self, identity: str):
         for vm in self._vms():
             if vm._moId == identity or vm.name == identity:

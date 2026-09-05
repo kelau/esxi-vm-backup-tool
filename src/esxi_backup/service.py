@@ -55,6 +55,11 @@ class BackupService:
         with self.client_factory(self.config.server) as client:
             return client.list_vms()
 
+    def refresh_storage_inventory(self) -> dict:
+        with self.client_factory(self.config.server) as client:
+            inventory = client.storage_inventory()
+        return self.repository.save_storage_snapshot(inventory)
+
     def vm_details(self, identity: str, repository_only: bool = False) -> dict:
         backup_records = self.repository.list(identity)
         try:

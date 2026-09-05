@@ -80,6 +80,11 @@ OVA packaging. Existing per-VM schedules migrate to single-VM named policies. Sc
 the repository and resume when the web service restarts. Configuration (with passwords excluded)
 is available at `GET /api/v1/config`.
 
+The Datastores page records persistent snapshots of ESXi datastore capacity, free space, backing
+devices, and registered VM placement. When trusted SSH is enabled, refreshes also query read-only
+SMART attributes with `esxcli`; the last successful inventory remains visible if a device or host
+later becomes unavailable.
+
 The VM table's **Backup size** is the compressed footprint of all unique chunks referenced by that
 recovery point. **New data** in Recent jobs is only the additional repository space written during
 that run; shared chunks mean deleting one recovery point may reclaim less than its displayed

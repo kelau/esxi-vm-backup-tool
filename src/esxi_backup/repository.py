@@ -121,6 +121,12 @@ class BackupRepository:
                 status TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0,
                 error TEXT, started_at TEXT NOT NULL, finished_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS storage_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_at TEXT NOT NULL, inventory_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS storage_snapshots_captured
+                ON storage_snapshots(captured_at DESC);
         """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(backups)")}
         for name, definition in {
@@ -161,6 +167,28 @@ class BackupRepository:
         self.db.commit()
         self._backfill_repository_index()
         self._backfill_backup_sizes()
+
+    @synchronized_db
+    def save_storage_snapshot(self, inventory: dict) -> dict:
+        captured_at = datetime.now(UTC).isoformat()
+        document = {**inventory, "captured_at": captured_at}
+        self.db.execute(
+            "INSERT INTO storage_snapshots(captured_at,inventory_json) VALUES(?,?)",
+            (captured_at, json.dumps(document)),
+        )
+        self.db.commit()
+        return document
+
+    @synchronized_db
+    def storage_snapshots(self, limit: int = 25) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT inventory_json FROM storage_snapshots ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [json.loads(row["inventory_json"]) for row in rows]
+
+    def latest_storage_snapshot(self) -> dict | None:
+        snapshots = self.storage_snapshots(1)
+        return snapshots[0] if snapshots else None
 
     @synchronized_db
     def _backfill_backup_sizes(self) -> None:

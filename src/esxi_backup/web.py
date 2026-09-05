@@ -113,6 +113,29 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def api_repository():
         return app.state.service.repository.stats()
 
+    @app.get("/api/v1/storage")
+    def api_storage(refresh: bool = False):
+        if refresh or app.state.service.repository.latest_storage_snapshot() is None:
+            return app.state.service.refresh_storage_inventory()
+        return app.state.service.repository.latest_storage_snapshot()
+
+    @app.get("/datastores", response_class=HTMLResponse)
+    def datastores_page(request: Request, refresh: bool = False):
+        error = None
+        try:
+            snapshot = (
+                app.state.service.refresh_storage_inventory()
+                if refresh or app.state.service.repository.latest_storage_snapshot() is None
+                else app.state.service.repository.latest_storage_snapshot()
+            )
+        except Exception as exc:
+            snapshot = app.state.service.repository.latest_storage_snapshot()
+            error = str(exc)
+        return templates.TemplateResponse(request, "datastores.html", {
+            "snapshot": snapshot, "error": error,
+            "history": app.state.service.repository.storage_snapshots(),
+        })
+
     @app.get("/api/v1/ova-exports")
     def api_ova_exports():
         return app.state.service.repository.list_ova_exports()
