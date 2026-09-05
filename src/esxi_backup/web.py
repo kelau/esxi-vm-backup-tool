@@ -69,6 +69,13 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 ))
                 vm_states[vm_id] = "backup_only"
         schedules = {item.vm_id: item for item in app.state.scheduler.schedules()}
+        schedule_info = {}
+        for policy in app.state.scheduler.policies():
+            for vm_id in policy.vm_ids:
+                state = schedule_info.setdefault(vm_id, {"active": [], "disabled": []})
+                state["disabled" if policy.frequency == "disabled" else "active"].append(
+                    policy.name
+                )
         ova_exports = {
             item.backup_id: item for item in app.state.service.repository.list_ova_exports()
         }
@@ -88,6 +95,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "connection_error": connection_error,
             "config": app.state.service.config,
             "schedules": schedules,
+            "schedule_info": schedule_info,
             "ova_exports": ova_exports,
             "ova_capable": ova_capable,
             "restores": restores,

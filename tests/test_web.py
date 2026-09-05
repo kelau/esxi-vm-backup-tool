@@ -1,6 +1,13 @@
 from fastapi.testclient import TestClient
 
-from esxi_backup.models import AppConfig, BackupRecord, BackupStatus, ServerConfig, VMInfo
+from esxi_backup.models import (
+    AppConfig,
+    BackupRecord,
+    BackupStatus,
+    SchedulePolicy,
+    ServerConfig,
+    VMInfo,
+)
 from esxi_backup.service import BackupService
 from esxi_backup.web import create_app
 
@@ -87,13 +94,16 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     })
     service.repository.start_ova_export("deleted-1")
     service.repository.update_ova_export("deleted-1", 12.34)
+    service.repository.save_schedule_policy(SchedulePolicy(
+        id="nightly", name="Nightly", vm_ids=["vm-1"], frequency="daily",
+    ))
     monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
     monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
 
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.6.1" in response.text
+    assert "v0.6.2" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -126,6 +136,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "ova-progress" not in response.text
     assert "estimating time remaining" in response.text
     assert 'data-sort="backupSize"' in response.text
+    assert 'data-sort="schedule"' in response.text
+    assert 'aria-label="Scheduled: Nightly"' in response.text
     assert "backup-progress-row" in response.text
     assert "Backup running" in response.text
     assert "throughput-chart" in response.text
