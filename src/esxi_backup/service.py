@@ -143,7 +143,12 @@ class BackupService:
                     active_files: set[str] = set()
                     progress_lock = threading.Lock()
                     transfer_started = time.monotonic()
-                    expected_total = virtual or sum(file_weights)
+                    # SSH clone sizes are final once vmkfstools completes, so they are the
+                    # honest transfer total. NFC sizes may be missing or discovered late; use
+                    # stable VM capacity there to keep lease progress monotonic.
+                    expected_total = (
+                        sum(file_weights) if lease is None else virtual or sum(file_weights)
+                    )
                     last_reported_percent = 0
                     last_ui_update = 0.0
 

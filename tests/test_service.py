@@ -129,6 +129,21 @@ def test_powered_off_backup_exports_vm_without_snapshot(tmp_path):
     assert service.backup("mail").status == "success"
 
 
+def test_ssh_backup_uses_sparse_clone_size_as_transfer_total(tmp_path):
+    class SshClient(FakeClient):
+        @contextmanager
+        def export_hot(self, _snapshot, _backup_id, _on_prepare=None):
+            yield None, [SimpleNamespace(
+                name="disk-01-s001.vmdk", url="memory://disk",
+                size=12, device_id="disk-1",
+            )]
+
+    service = BackupService(config(tmp_path), client_factory=SshClient)
+    record = service.backup("mail")
+
+    assert record.expected_bytes == 12
+
+
 def test_backup_can_be_cancelled_and_still_removes_snapshot(tmp_path):
     service = None
 
