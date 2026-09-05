@@ -323,15 +323,25 @@ class EsxiClient:
                 destination = f"{directory}/disk-{index:02d}.vmdk"
                 self._run_ssh(
                     "vmkfstools -i " + shlex.quote(source) + " "
-                    + shlex.quote(destination) + " -d streamOptimized"
+                    + shlex.quote(destination) + " -d 2gbsparse"
                 )
-                created.append(destination)
-                files.append(ExportFile(
-                    name=PurePosixPath(destination).name,
-                    url=f"sftp:{destination}",
-                    size=int(sftp.stat(destination).st_size),
-                    device_id=str(disk.key),
-                ))
+                prefix = f"disk-{index:02d}"
+                clone_paths = sorted(
+                    f"{directory}/{item.filename}"
+                    for item in sftp.listdir_attr(directory)
+                    if item.filename == f"{prefix}.vmdk"
+                    or item.filename.startswith(f"{prefix}-s")
+                )
+                if not clone_paths:
+                    raise RuntimeError(f"vmkfstools produced no files for {source}")
+                for path in clone_paths:
+                    created.append(path)
+                    files.append(ExportFile(
+                        name=PurePosixPath(path).name,
+                        url=f"sftp:{path}",
+                        size=int(sftp.stat(path).st_size),
+                        device_id=str(disk.key),
+                    ))
             yield None, files
         finally:
             for path in reversed(created):

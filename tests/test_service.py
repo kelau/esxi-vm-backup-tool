@@ -178,6 +178,23 @@ def test_restore_maps_esxi_device_keys_to_portable_names(tmp_path):
     assert outputs[0].read_bytes() == b"disk-data"
 
 
+def test_restore_preserves_split_sparse_vmdk_names(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    descriptor, _, _ = service.repository.store_stream(BytesIO(b"descriptor"))
+    extent, _, _ = service.repository.store_stream(BytesIO(b"extent"))
+    service.repository.write_manifest("ssh-backup", {
+        "format": 1, "transport": "ssh-2gbsparse", "backup_id": "ssh-backup",
+        "vm_id": "vm-42", "vm_name": "mail", "files": [
+            {"name": "disk-01.vmdk", "chunks": descriptor},
+            {"name": "disk-01-s001.vmdk", "chunks": extent},
+        ],
+    })
+
+    outputs = service.restore("ssh-backup", tmp_path / "split-output")
+
+    assert [path.name for path in outputs] == ["disk-01.vmdk", "disk-01-s001.vmdk"]
+
+
 def test_restore_to_esxi_uses_captured_ovf(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     service.repository.write_manifest("ovf-backup", {

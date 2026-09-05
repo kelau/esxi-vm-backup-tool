@@ -122,7 +122,10 @@ class BackupService:
                     if snapshot is not None else client.export(export_source)
                 )
                 with export_context as (lease, exports):
-                    ovf_descriptor = client.create_ovf_descriptor(vm, exports)
+                    ovf_descriptor = (
+                        client.create_ovf_descriptor(vm, exports)
+                        if lease is not None else None
+                    )
                     export_count = max(1, len(exports))
                     total_transferred = 0
                     file_progress = [0.0] * len(exports)
@@ -220,6 +223,7 @@ class BackupService:
                 self.repository.write_manifest(backup_id, {
                     "format": 1, "backup_id": backup_id, "vm_id": vm._moId,
                     "vm_name": vm.name, "ovf_descriptor": ovf_descriptor, "files": files,
+                    "transport": "nfc" if ovf_descriptor else "ssh-2gbsparse",
                 })
                 successful = True
             except BackupCancelled:
@@ -261,9 +265,12 @@ class BackupService:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         destination.mkdir(parents=True, exist_ok=True)
         outputs = []
+        preserve_names = manifest.get("transport") == "ssh-2gbsparse"
         for index, file in enumerate(manifest["files"], start=1):
             raw_name = str(file["name"]).lower()
-            if "nvram" in raw_name:
+            if preserve_names:
+                safe_name = PurePosixPath(str(file["name"])).name
+            elif "nvram" in raw_name:
                 safe_name = "vm.nvram"
             elif any(kind in raw_name for kind in ("scsi", "sata", "ide", "vmdk")):
                 safe_name = f"disk-{index:02d}.vmdk"
@@ -284,7 +291,9 @@ class BackupService:
         descriptor = manifest.get("ovf_descriptor")
         if not descriptor:
             raise ValueError(
-                "This recovery point predates OVF capture; use offline restore and attach its disk."
+                "This recovery point has no OVF export. Reconstruct it with offline restore; "
+                "SSH hot backups contain split sparse VMDK files that can be converted with "
+                "vmkfstools and attached to a replacement VM."
             )
         with self.client_factory(self.config.server) as client:
             client.import_ovf(

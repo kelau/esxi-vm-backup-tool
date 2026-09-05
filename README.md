@@ -102,7 +102,7 @@ management network. Bind to `127.0.0.1` (the default) otherwise.
 2. Create a quiesced snapshot without VM memory. VMware Tools must be installed for application-
    aware filesystem quiescing. Set `quiesce = false` if unavailable.
 3. Try an HTTP NFC snapshot-export lease. If standalone ESXi does not implement it and the SSH
-   fallback is enabled, use `vmkfstools` to create temporary stream-optimized thin clones from
+   fallback is enabled, use `vmkfstools` to create temporary split sparse clones from
    the snapshot disk chain and transfer them over SFTP.
 4. Hash, compress, and atomically persist chunks; write the recovery-point manifest.
 5. Complete the lease or remove temporary SSH clones, then remove the snapshot in `finally`
@@ -126,6 +126,11 @@ firmware and controller type, convert/upload the VMDK, and attach it as an exist
 `export-ova` creates a portable OVA on demand by streaming verified chunks directly into its tar
 archive. The compact repository remains the primary storage format; retaining an OVA for every
 recovery point would duplicate full virtual disks and defeat cross-backup deduplication.
+
+SSH hot-backup recovery points contain a VMDK descriptor plus 2 GiB sparse extents. Use offline
+restore to reconstruct the set, then run `vmkfstools -i disk-01.vmdk recovered.vmdk -d thin` on
+ESXi and attach `recovered.vmdk` to a replacement VM. OVA and direct NFC restore are unavailable
+for these points because the standalone host cannot produce a stream-optimized snapshot export.
 
 ## Development
 
