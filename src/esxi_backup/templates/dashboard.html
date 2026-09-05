@@ -29,11 +29,11 @@
   <div id="connection">{% if connection_error %}<p class="error">ESXi connection: {{ connection_error }}</p>{% endif %}</div>
   <section id="repo-summary" class="repo-summary"><div class="repo-card"><small>Total repository</small><strong>{{ bytes(repository_stats.total_bytes) }}</strong></div><div class="repo-card"><small>Deduplicated chunks</small><strong>{{ bytes(repository_stats.chunk_bytes) }}</strong></div><div class="repo-card"><small>OVA exports</small><strong>{{ bytes(repository_stats.ova_bytes) }}</strong></div><div class="repo-card"><small>Recovery points</small><strong>{{ repository_stats.recovery_points }}</strong></div></section>
   <h2>Virtual machines</h2><table id="vm-table"><thead><tr><th class="sortable" data-sort="name">VM</th><th class="sortable" data-sort="state">State</th><th class="sortable" data-sort="power">Power</th><th class="sortable" data-sort="size">VM size</th><th class="sortable" data-sort="backup">Latest backup</th><th class="sortable" data-sort="backupSize">Backup size</th><th></th></tr></thead><tbody>
-  {% for vm in vms %}<tr class="vm-row" data-vm-id="{{ vm.id }}" data-vm-state="{{ vm_states[vm.id] }}" data-sort-name="{{ vm.name|lower }}" data-sort-state="{{ vm_states[vm.id] }}" data-sort-power="{{ vm.power_state }}" data-sort-size="{{ vm.provisioned_bytes }}" data-sort-backup="{{ latest[vm.id].started_at.isoformat() if vm.id in latest else '' }}" data-sort-backup-size="{{ latest[vm.id].repository_bytes|default(latest[vm.id].stored_bytes, true) if vm.id in latest else 0 }}"><td><span class="vm-name">{{ vm.name }}</span><br><small class="vm-os">{{ vm.guest_os or vm.id }}</small></td>
+  {% for vm in vms %}<tr class="vm-row" data-vm-id="{{ vm.id }}" data-vm-state="{{ vm_states[vm.id] }}" data-sort-name="{{ vm.name|lower }}" data-sort-state="{{ vm_states[vm.id] }}" data-sort-power="{{ vm.power_state }}" data-sort-size="{{ vm.provisioned_bytes }}" data-sort-backup="{{ latest[vm.id].started_at.isoformat() if vm.id in latest else '' }}" data-sort-backup-size="{{ latest[vm.id].repository_bytes|default(latest[vm.id].stored_bytes, true) if vm.id in latest else 0 }}"><td><span class="vm-name">{{ vm.name }}</span><br><small class="vm-os">{{ vm.reference or vm.guest_os or vm.id }}</small></td>
     <td><span class="state {{ vm_states[vm.id]|replace('_', '-') }}">{% if vm_states[vm.id] == 'live' %}Live on ESXi{% elif vm_states[vm.id] == 'inaccessible' %}Inaccessible on ESXi{% else %}Backup only{% endif %}</span></td>
     <td>{% if vm_states[vm.id] == 'live' %}<span class="power"><span class="power-icon {% if vm.power_state == 'poweredOn' %}on{% elif vm.power_state == 'suspended' %}suspended{% else %}off{% endif %}" title="{{ vm.power_state }}" aria-label="{{ vm.power_state }}">{% if vm.power_state == 'poweredOn' %}●{% elif vm.power_state == 'suspended' %}Ⅱ{% else %}○{% endif %}</span></span>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="size">{% if vm.provisioned_bytes %}{{ bytes(vm.provisioned_bytes) }}{% else %}<span class="muted">Unknown</span>{% endif %}</td>
-    <td>{% if vm.id in latest %}{% if latest[vm.id].status == 'running' %}<span class="running-icon" title="Backup running" aria-label="Backup running">↻</span>{% else %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span>{% endif %} · <time class="local-time" datetime="{{ latest[vm.id].started_at.isoformat() }}">{{ latest[vm.id].started_at.strftime('%Y-%m-%d %H:%M') }}</time>{% if latest[vm.id].error %}<br><small class="error error-brief" title="{{ latest[vm.id].error }}">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
+    <td>{% if vm.id in latest %}{% if latest[vm.id].status == 'running' %}<span class="running-icon" title="Backup running" aria-label="Backup running">↻</span>{% else %}<span class="{{ latest[vm.id].status }}">{{ latest[vm.id].status }}</span>{% endif %} · <time class="relative-backup-time" datetime="{{ latest[vm.id].started_at.isoformat() }}">{{ latest[vm.id].started_at.strftime('%Y-%m-%d') }}</time>{% if latest[vm.id].error %}<br><small class="error error-brief" title="{{ latest[vm.id].error }}">{{ latest[vm.id].error }}</small>{% endif %}{% else %}Never{% endif %}</td>
     <td class="size">{% if vm.id in latest and latest[vm.id].status == 'success' %}{{ bytes(latest[vm.id].repository_bytes|default(latest[vm.id].stored_bytes, true)) }}{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="actions-cell"><details class="actions"><summary aria-label="Actions for {{ vm.name }}" title="Actions">⋮</summary><div class="actions-menu">
       {% if vm_states[vm.id] == 'live' %}<h3>Backup</h3>{% if vm.id in latest and latest[vm.id].status == 'running' %}<form class="cancel-backup" method="post" action="/backups/{{ latest[vm.id].id }}/cancel"><button>Cancel active backup</button></form>{% else %}<form method="post" action="/vms/{{ vm.id }}/backups"><button class="backup-now">Back up now</button></form>{% endif %}
@@ -68,6 +68,18 @@
     function localizeTimes() {
       document.querySelectorAll('time.local-time').forEach(element => {
         element.textContent = new Date(element.dateTime).toLocaleString();
+      });
+      document.querySelectorAll('time.relative-backup-time').forEach(element => {
+        const date = new Date(element.dateTime);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const localDate = new Date(date); localDate.setHours(0, 0, 0, 0);
+        const daysAgo = Math.round((today - localDate) / 86400000);
+        element.title = date.toLocaleString();
+        if (daysAgo === 0) element.textContent = 'Today';
+        else if (daysAgo === 1) element.textContent = 'Yesterday';
+        else if (daysAgo > 1 && daysAgo < 7) {
+          element.textContent = date.toLocaleDateString(undefined, {weekday: 'long'});
+        } else element.textContent = date.toLocaleDateString();
       });
     }
     function applyVmSort() {
@@ -109,7 +121,8 @@
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
       const remainder = seconds % 60;
-      return (hours ? hours + 'h ' : '') + (minutes ? minutes + 'm ' : '') + remainder + 's';
+      if (hours) return hours + 'h ' + minutes + 'm';
+      return (minutes ? minutes + 'm ' : '') + remainder + 's';
     }
     function formatDuration(start) {
       return formatSeconds((Date.now() - new Date(start)) / 1000);

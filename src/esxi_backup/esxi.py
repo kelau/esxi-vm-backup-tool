@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
+from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -72,12 +73,21 @@ class EsxiClient:
             connection_state = str(getattr(runtime, "connectionState", "connected"))
             if config is None and connection_state == "connected":
                 connection_state = "inaccessible"
+            source_name = getattr(vm, "name", vm._moId)
+            reference = None
+            display_name = source_name
+            if connection_state in {"inaccessible", "orphaned"}:
+                path = PurePosixPath(str(source_name).replace("\\", "/"))
+                if path.suffix.lower() == ".vmx":
+                    display_name = path.stem
+                    reference = str(source_name)
             inventory.append(VMInfo(
                 id=vm._moId,
-                name=getattr(vm, "name", vm._moId),
+                name=display_name,
                 power_state=str(getattr(runtime, "powerState", "unknown")),
                 connection_state=connection_state,
                 guest_os=getattr(config, "guestFullName", None),
+                reference=reference,
                 provisioned_bytes=sum(
                     getattr(device, "capacityInBytes", 0) for device in devices
                 ),

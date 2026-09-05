@@ -101,6 +101,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "updateRemainingTimes" in response.text
     assert 'class="vm-name"' in response.text
     assert 'class="vm-os"' in response.text
+    assert 'class="relative-backup-time"' in response.text
+    assert "daysAgo === 0" in response.text
 
 
 def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
