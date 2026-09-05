@@ -470,10 +470,10 @@ class BackupRepository:
         self.db.commit()
 
     @synchronized_db
-    def update_ova_export(self, backup_id: str, progress: int) -> None:
+    def update_ova_export(self, backup_id: str, progress: float) -> None:
         self.db.execute(
             "UPDATE ova_exports SET progress=? WHERE backup_id=?",
-            (max(0, min(99, progress)), backup_id),
+            (max(0.0, min(99.9, progress)), backup_id),
         )
         self.db.commit()
 

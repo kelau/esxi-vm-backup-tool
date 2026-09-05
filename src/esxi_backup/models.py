@@ -101,7 +101,7 @@ class SchedulePolicy(BaseModel):
 class OvaExportRecord(BaseModel):
     backup_id: str
     status: BackupStatus
-    progress: Annotated[int, Field(ge=0, le=100)] = 0
+    progress: Annotated[float, Field(ge=0, le=100)] = 0
     path: str | None = None
     error: str | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

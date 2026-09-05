@@ -357,7 +357,7 @@ class BackupService:
                         archive.addfile(info, stream)
                     written += int(file["size"])
                     self.repository.update_ova_export(
-                        backup_id, int(written * 100 / total)
+                        backup_id, round(written * 100 / total, 1)
                     )
             temporary.replace(destination)
         except Exception:

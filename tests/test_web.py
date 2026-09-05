@@ -65,6 +65,8 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
         "backup_id": "deleted-1", "vm_id": "vm-deleted", "vm_name": "deleted-demo",
         "ovf_descriptor": "<Envelope/>", "files": [],
     })
+    service.repository.start_ova_export("deleted-1")
+    service.repository.update_ova_export("deleted-1", 12.34)
     monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
     monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
 
@@ -91,12 +93,15 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "deleted-demo" in response.text
     assert 'data-vm-state="backup_only"' in response.text
     assert "Remove all backups" in response.text
-    assert "Build OVA" in response.text
     assert "Restore to ESXi" in response.text
     assert "localizeTimes" in response.text
     assert "applyVmSort" in response.text
     assert 'href="/schedules"' in response.text
     assert "enhanceOvaProgress" in response.text
+    assert ">12.3%</span>" in response.text
+    assert 'data-progress="12.34"' in response.text
+    assert "ova-progress" not in response.text
+    assert "estimating time remaining" in response.text
     assert 'data-sort="backupSize"' in response.text
     assert "backup-progress-row" in response.text
     assert "Backup running" in response.text
