@@ -103,7 +103,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.6.2" in response.text
+    assert "v0.6.3" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -181,6 +181,8 @@ def test_datastores_page_persists_inventory_snapshot(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "datastore1" in response.text
     assert "Test SSD" in response.text
+    assert "Vendor / model" in response.text
+    assert "TEST FAST" in response.text
     assert "Health Status" in response.text
     assert "Healthy media health" in response.text
     assert "demo" in response.text
