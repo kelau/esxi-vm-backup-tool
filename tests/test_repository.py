@@ -26,6 +26,19 @@ def test_chunks_are_compressed_deduplicated_and_restorable(tmp_path):
     assert output.getvalue() == b"abcdefghabcdefgh"
 
 
+def test_read_progress_is_finer_than_repository_chunks(tmp_path):
+    repository = BackupRepository(tmp_path, chunk_size=2 * 1024 * 1024, level=1)
+    reads = []
+
+    chunks, logical, _stored = repository.store_stream(
+        BytesIO(b"x" * (2 * 1024 * 1024 + 7)), on_read=reads.append
+    )
+
+    assert logical == 2 * 1024 * 1024 + 7
+    assert len(chunks) == 2
+    assert reads == [1024 * 1024, 1024 * 1024, 7]
+
+
 def test_catalog_lifecycle(tmp_path):
     repository = BackupRepository(tmp_path)
     record = BackupRecord(id="one", vm_id="vm-1", vm_name="db", status=BackupStatus.RUNNING)

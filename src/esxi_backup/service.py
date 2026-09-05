@@ -212,7 +212,7 @@ class BackupService:
                                         state["last_percent"] = percent
 
                             chunks, file_logical, file_stored = self.repository.store_stream(
-                                stream, on_bytes=report, workers=self.config.pipeline_workers
+                                stream, on_read=report, workers=self.config.pipeline_workers
                             )
                         with progress_lock:
                             file_progress[file_index] = 1.0

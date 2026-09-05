@@ -307,7 +307,7 @@ class BackupRepository:
 
     def store_stream(
         self, stream: BinaryIO, on_bytes: Callable[[int], None] | None = None,
-        workers: int = 2,
+        workers: int = 2, on_read: Callable[[int], None] | None = None,
     ) -> tuple[list[dict[str, int | str]], int, int]:
         manifest: list[dict[str, int | str]] = []
         logical = stored = 0
@@ -347,10 +347,20 @@ class BackupRepository:
                 on_bytes(data_size)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            while data := stream.read(self.chunk_size):
-                pending.append(executor.submit(prepare, data))
+            buffer = bytearray()
+            read_size = min(self.chunk_size, 1024 * 1024)
+            while data := stream.read(read_size):
+                if on_read:
+                    on_read(len(data))
+                buffer.extend(data)
+                if len(buffer) < self.chunk_size:
+                    continue
+                pending.append(executor.submit(prepare, bytes(buffer)))
+                buffer.clear()
                 if len(pending) >= workers * 2:
                     consume(pending.popleft())
+            if buffer:
+                pending.append(executor.submit(prepare, bytes(buffer)))
             while pending:
                 consume(pending.popleft())
         return manifest, logical, stored
