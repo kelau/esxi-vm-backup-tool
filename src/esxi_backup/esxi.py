@@ -273,6 +273,15 @@ class EsxiClient:
         self.ssh = client
         return client
 
+    def _open_transfer_sftp(self):
+        """Open a high-bandwidth SFTP channel instead of Paramiko's small defaults."""
+        transport = self.ssh.get_transport()
+        return paramiko.SFTPClient.from_transport(
+            transport,
+            window_size=128 * 1024 * 1024,
+            max_packet_size=1024 * 1024,
+        )
+
     def inspect_ssh_host_key(self) -> tuple[str, str]:
         if paramiko is None:
             raise RuntimeError("SSH hot backup requires the paramiko package.")
@@ -401,8 +410,11 @@ class EsxiClient:
     def open_export(self, url: str):
         if url.startswith("sftp:"):
             path = url.removeprefix("sftp:")
-            sftp = self.ssh.open_sftp()
-            return SftpExportStream(sftp, sftp.open(path, "rb"), sftp.stat(path).st_size)
+            sftp = self._open_transfer_sftp()
+            size = int(sftp.stat(path).st_size)
+            handle = sftp.open(path, "rb", bufsize=1024 * 1024)
+            handle.prefetch(size, max_concurrent_requests=64)
+            return SftpExportStream(sftp, handle, size)
         context = ssl.create_default_context()
         if not self.config.verify_ssl:
             context.check_hostname = False
