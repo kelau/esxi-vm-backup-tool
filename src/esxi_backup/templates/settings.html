@@ -32,7 +32,11 @@
     </div>
     <label class="check"><input name="ssh_enabled" type="checkbox" value="true" {% if config.server.ssh_enabled %}checked{% endif %}> Enable SSH fallback for hot backups</label>
     <label class="check"><input name="ssh_verify_host_key" type="checkbox" value="true" {% if config.server.ssh_verify_host_key %}checked{% endif %}> Verify SSH host key</label>
-    <small>Requires the ESXi SSH service and permission to run vmkfstools. With verification enabled, the host must be present in the service account's known_hosts file.</small>
+    <small>Requires the ESXi SSH service and permission to run vmkfstools.</small>
+    {% if config.server.ssh_verify_host_key %}
+      <p><button type="submit" formaction="/settings/trust-ssh-host" formmethod="post" onclick="return confirm('Trust the SSH key currently presented by this ESXi host? Verify its fingerprint in ESXi first when possible.')">Trust current ESXi SSH key</button>
+      <small>{% if config.server.ssh_host_key %}A host key is pinned. Use this only when intentionally replacing it.{% else %}No SSH host key is trusted yet.{% endif %}</small></p>
+    {% endif %}
     <h2>Backup storage</h2><div class="grid">
       <label>Repository path<input name="repository" value="{{ config.repository }}" required></label>
       <label>Chunk size (MiB)<input name="chunk_size_mib" type="number" min="1" max="256" value="{{ config.chunk_size_mib }}" required></label>

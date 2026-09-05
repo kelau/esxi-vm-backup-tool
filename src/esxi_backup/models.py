@@ -25,6 +25,7 @@ class ServerConfig(BaseModel):
     ssh_username: str | None = None
     ssh_password: SecretStr | None = None
     ssh_verify_host_key: bool = True
+    ssh_host_key: str | None = None
 
 
 class RetentionConfig(BaseModel):

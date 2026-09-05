@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 import shlex
+import socket
 import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -40,6 +43,29 @@ class ExportFile:
 
 class SnapshotExportUnsupported(RuntimeError):
     pass
+
+
+def ssh_fingerprint(key) -> str:
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+class PinnedHostKeyPolicy:
+    def __init__(self, expected: str | None):
+        self.expected = expected
+
+    def missing_host_key(self, _client, hostname, key):
+        fingerprint = ssh_fingerprint(key)
+        if self.expected and key.get_base64() == self.expected:
+            return
+        if self.expected:
+            raise paramiko.SSHException(
+                f"SSH host key for {hostname} changed; presented fingerprint is {fingerprint}."
+            )
+        raise paramiko.SSHException(
+            f"SSH host key for {hostname} is not trusted ({fingerprint}). "
+            "Review and trust it on the Configuration page."
+        )
 
 
 class SftpExportStream:
@@ -230,8 +256,7 @@ class EsxiClient:
             raise RuntimeError("SSH hot backup requires the paramiko package.")
         client = paramiko.SSHClient()
         if self.config.ssh_verify_host_key:
-            client.load_system_host_keys()
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            client.set_missing_host_key_policy(PinnedHostKeyPolicy(self.config.ssh_host_key))
         else:
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         password = self.config.ssh_password or self.config.password
@@ -246,6 +271,18 @@ class EsxiClient:
         )
         self.ssh = client
         return client
+
+    def inspect_ssh_host_key(self) -> tuple[str, str]:
+        if paramiko is None:
+            raise RuntimeError("SSH hot backup requires the paramiko package.")
+        sock = socket.create_connection((self.config.host, self.config.ssh_port), timeout=15)
+        transport = paramiko.Transport(sock)
+        try:
+            transport.start_client(timeout=15)
+            key = transport.get_remote_server_key()
+            return key.get_base64(), ssh_fingerprint(key)
+        finally:
+            transport.close()
 
     @staticmethod
     def _datastore_path(backing: str) -> tuple[str, str]:

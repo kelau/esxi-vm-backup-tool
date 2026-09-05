@@ -173,6 +173,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                             if current.server.ssh_password else None)
                     ),
                     ssh_verify_host_key=ssh_verify_host_key,
+                    ssh_host_key=current.server.ssh_host_key,
                 ),
                 repository=repository.strip(), chunk_size_mib=chunk_size_mib,
                 compression_level=compression_level, pipeline_workers=pipeline_workers,
@@ -182,6 +183,25 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                     keep_weekly=keep_weekly, keep_monthly=keep_monthly,
                 ),
             )
+            save_config(updated, app.state.config_path)
+            app.state.scheduler.shutdown()
+            app.state.service = BackupService(updated)
+            app.state.scheduler = BackupScheduler(app.state.service)
+            app.state.scheduler.start()
+        except Exception as exc:
+            return templates.TemplateResponse(request, "settings.html", {
+                "config": current, "saved": False, "error": str(exc),
+            }, status_code=422)
+        return RedirectResponse("/settings?saved=true", status_code=303)
+
+    @app.post("/settings/trust-ssh-host")
+    def trust_ssh_host(request: Request):
+        current = app.state.service.config
+        try:
+            with app.state.service.client_factory(current.server) as client:
+                host_key, _fingerprint = client.inspect_ssh_host_key()
+            updated = current.model_copy(deep=True)
+            updated.server.ssh_host_key = host_key
             save_config(updated, app.state.config_path)
             app.state.scheduler.shutdown()
             app.state.service = BackupService(updated)

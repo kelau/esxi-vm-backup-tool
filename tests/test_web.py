@@ -42,6 +42,9 @@ class FakeClient:
         if on_progress:
             on_progress(80)
 
+    def inspect_ssh_host_key(self):
+        return "encoded-host-key", "SHA256:test-fingerprint"
+
 
 def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     config = AppConfig(
@@ -184,6 +187,25 @@ def test_config_api_excludes_both_passwords(tmp_path, monkeypatch):
 
     assert "password" not in server
     assert "ssh_password" not in server
+
+
+def test_settings_can_pin_current_esxi_ssh_key(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path / "repo"),
+    )
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda updated: BackupService(
+        updated, client_factory=FakeClient
+    ))
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    response = TestClient(create_app(config_path)).post(
+        "/settings/trust-ssh-host", follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert 'ssh_host_key = "encoded-host-key"' in config_path.read_text(encoding="utf-8")
 
 
 def test_web_can_build_and_download_ova(tmp_path, monkeypatch):
