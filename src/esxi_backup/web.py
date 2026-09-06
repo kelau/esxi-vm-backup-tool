@@ -211,10 +211,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "updates.html", {})
 
     @app.get("/api/v1/update/check")
-    def api_update_check():
+    def api_update_check(refresh: bool = False):
         now = datetime.now(UTC)
         cached_at = app.state.release_cache["checked_at"]
-        if not cached_at or (now - cached_at).total_seconds() > 900:
+        if refresh or not cached_at or (now - cached_at).total_seconds() > 900:
             try:
                 response = httpx.get(
                     "https://api.github.com/repos/kelau/esxi-vm-backup-tool/releases",
@@ -239,6 +239,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         payload = dict(app.state.release_cache["payload"])
         payload["available"] = _version_key(payload["latest_version"]) > _version_key(__version__)
         payload["enabled"] = app.state.update_request_path.parent.is_dir()
+        payload["checked_at"] = app.state.release_cache["checked_at"]
         return payload
 
     @app.get("/api/v1/notifications")
