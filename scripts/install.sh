@@ -79,16 +79,19 @@ fi
 target="$INSTALL_ROOT/releases/$version"
 install -d -m 0755 "$INSTALL_ROOT/releases"
 if [ ! -x "$target/bin/esxi-backup" ]; then
-  temporary="$INSTALL_ROOT/releases/.${version}.installing"
-  rm -rf "$temporary"
-  python3 -m venv "$temporary"
-  "$temporary/bin/pip" install --disable-pip-version-check --upgrade pip
-  source_archive="$temporary/source.tar.gz"
+  # Virtual-environment launchers contain absolute shebang paths, so the venv
+  # must be created at its final location rather than moved after installation.
+  rm -rf "$target"
+  python3 -m venv "$target"
+  "$target/bin/pip" install --disable-pip-version-check --upgrade pip
+  source_archive="$target/source.tar.gz"
   github_curl -H 'Accept: application/vnd.github+json' \
     "https://api.github.com/repos/${REPOSITORY}/tarball/${tag}" -o "$source_archive"
-  "$temporary/bin/pip" install --disable-pip-version-check "$source_archive"
+  if ! "$target/bin/pip" install --disable-pip-version-check "$source_archive"; then
+    rm -rf "$target"
+    fail "Application installation failed; the active release was not changed."
+  fi
   rm -f "$source_archive"
-  mv "$temporary" "$target"
 fi
 ln -sfn "$target" "$INSTALL_ROOT/current.new"
 mv -Tf "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current"
