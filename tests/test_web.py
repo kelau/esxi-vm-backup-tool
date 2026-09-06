@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.9.4" in response.text
+    assert "v0.9.5" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -365,7 +365,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.4"
+    assert status["version"] == "0.9.5"
     assert status["requested_at"] is not None
 
 
@@ -450,6 +450,9 @@ def test_vm_can_be_excluded_filtered_and_included(tmp_path, monkeypatch):
     assert "hide-excluded-vms" in dashboard.text
     assert "hide-inaccessible-vms" in dashboard.text
     assert "Include in backups" in dashboard.text
+    excluded_row = dashboard.text.split('data-vm-id="vm-1"', 1)[1].split("</tr>", 1)[0]
+    assert "Manage schedule policies" not in excluded_row
+    assert ".vm-row.excluded>td:not(.actions-cell)" in dashboard.text
     assert blocked.status_code == 409
     assert included.json()["excluded"] is False
     assert service.config.excluded_vm_ids == []
