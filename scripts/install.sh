@@ -6,17 +6,49 @@ INSTALL_ROOT="${ESXI_BACKUP_INSTALL_ROOT:-/opt/esxi-vm-backup}"
 CONFIG_DIR="${ESXI_BACKUP_CONFIG_DIR:-/etc/esxi-vm-backup}"
 DATA_DIR="${ESXI_BACKUP_DATA_DIR:-/var/lib/esxi-vm-backup}"
 SERVICE_USER="${ESXI_BACKUP_USER:-esxi-backup}"
+WEB_PORT="${ESXI_BACKUP_WEB_PORT:-8080}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 UPDATE_ONLY=false
 [ "${1:-}" = "--update" ] && UPDATE_ONLY=true
 
 fail() { printf '%s\n' "ERROR: $*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "Run this installer as root (for example: curl ... | sudo sh)."
-command -v curl >/dev/null 2>&1 || fail "curl is required."
-command -v python3 >/dev/null 2>&1 || fail "Python 3.11 or newer is required."
 command -v systemctl >/dev/null 2>&1 || fail "systemd is required."
-python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' \
-  || fail "Python 3.11 or newer is required."
+
+install_system_dependencies() {
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates python3 python3-venv python3-pip
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y curl ca-certificates python3 python3-pip
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y curl ca-certificates python3 python3-pip
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install curl ca-certificates python3 python3-pip
+  else
+    fail "No supported package manager found (apt, dnf, yum, or zypper)."
+  fi
+}
+
+if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1 \
+  || ! python3 -c 'import sys, venv; raise SystemExit(sys.version_info < (3, 11))' 2>/dev/null; then
+  [ "$UPDATE_ONLY" = false ] || fail "Python 3.11+, venv, and curl are required to update."
+  install_system_dependencies
+fi
+command -v curl >/dev/null 2>&1 || fail "curl installation failed."
+python3 -c 'import sys, venv; raise SystemExit(sys.version_info < (3, 11))' \
+  || fail "Python 3.11 or newer with venv support is required."
+
+open_web_firewall_port() {
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow "${WEB_PORT}/tcp" comment 'ESXi VM Backup Tool'
+  elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+    firewall-cmd --permanent --add-port="${WEB_PORT}/tcp"
+    firewall-cmd --reload
+  else
+    printf 'No active ufw or firewalld detected; ensure TCP port %s is allowed.\n' "$WEB_PORT"
+  fi
+}
 
 github_curl() {
   if [ -n "$GITHUB_TOKEN" ]; then
@@ -108,7 +140,7 @@ Wants=network-online.target
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
-ExecStart=$INSTALL_ROOT/current/bin/esxi-backup web --config $CONFIG_DIR/config.toml --host 0.0.0.0 --port 8080
+ExecStart=$INSTALL_ROOT/current/bin/esxi-backup web --config $CONFIG_DIR/config.toml --host 0.0.0.0 --port $WEB_PORT
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true
@@ -145,6 +177,9 @@ EOF
 systemctl daemon-reload
 systemctl enable --now esxi-vm-backup-update.timer
 systemctl enable esxi-vm-backup.service
+if [ "$UPDATE_ONLY" = false ]; then
+  open_web_firewall_port
+fi
 if grep -q 'CHANGE-ME' "$CONFIG_DIR/config.toml"; then
   printf '\nInstalled version %s. Edit %s, then run:\n  systemctl start esxi-vm-backup\n' \
     "$version" "$CONFIG_DIR/config.toml"

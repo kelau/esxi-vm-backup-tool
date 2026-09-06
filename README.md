@@ -38,22 +38,17 @@ systemd-based Linux host:
 curl -fsSL https://raw.githubusercontent.com/kelau/esxi-vm-backup-tool/main/scripts/install.sh | sudo sh
 ```
 
-Because this repository is currently private, use a fine-grained token with read-only Contents
-access. The token is stored root-only for unattended update checks:
-
-```bash
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.raw+json" \
-  "https://api.github.com/repos/kelau/esxi-vm-backup-tool/contents/scripts/install.sh?ref=main" \
-  | sudo GITHUB_TOKEN="$GITHUB_TOKEN" sh
-```
-
 Edit `/etc/esxi-vm-backup/config.toml`, then run
 `sudo systemctl start esxi-vm-backup`. The installer creates a persistent daily systemd timer that
 checks GitHub Releases and atomically switches to a newer version only after its isolated virtual
 environment installs successfully. Disable automatic updates with
 `sudo systemctl disable --now esxi-vm-backup-update.timer`. Previous environments remain under
 `/opt/esxi-vm-backup/releases` for manual rollback.
+
+On apt, dnf, yum, and zypper systems, the installer installs curl, CA certificates, Python 3,
+pip, and venv support when needed. Python 3.11 or newer is required. It opens TCP port 8080 when
+ufw or firewalld is active; otherwise it prints the port that must be allowed manually. To use a
+different web port, download the script and run it with `ESXI_BACKUP_WEB_PORT` set.
 
 ### Python package
 
