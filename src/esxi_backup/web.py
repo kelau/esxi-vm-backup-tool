@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import threading
 import uuid
@@ -40,6 +41,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app.state.service = BackupService(load_config(config_path))
     app.state.config_path = resolve_config_path(config_path)
     app.state.scheduler = BackupScheduler(app.state.service)
+    app.state.update_request_path = Path(os.environ.get(
+        "ESXI_BACKUP_UPDATE_REQUEST", "/run/esxi-vm-backup/update-request"
+    ))
     app.state.storage_refresh = {
         "status": "idle", "started_at": None, "finished_at": None, "error": None,
     }
@@ -75,6 +79,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
+        update_enabled = (
+            app.state.update_request_path.parent.is_dir()
+            and os.access(app.state.update_request_path.parent, os.W_OK)
+        )
         try:
             vms = app.state.service.list_vms()
             connection_error = None
@@ -95,6 +103,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 "latest_recovery": {}, "repository_vm_ids": set(),
                 "repository_stats": {"total_bytes": 0, "chunk_bytes": 0,
                                      "ova_bytes": 0, "recovery_points": 0},
+                "update_enabled": update_enabled,
             })
         backups = app.state.service.repository.list()
         latest_job = {}
@@ -154,7 +163,29 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "latest_recovery": latest_recovery,
             "repository_vm_ids": set(latest_job),
             "repository_error": None, "repository_available": True,
+            "update_enabled": update_enabled,
         })
+
+    @app.get("/api/v1/update/status")
+    def api_update_status():
+        path = app.state.update_request_path
+        return {
+            "enabled": path.parent.is_dir() and os.access(path.parent, os.W_OK),
+            "version": __version__,
+            "requested_at": (
+                datetime.fromtimestamp(path.stat().st_mtime, UTC) if path.exists() else None
+            ),
+        }
+
+    @app.post("/api/v1/update", status_code=202)
+    def api_request_update():
+        path = app.state.update_request_path
+        if not path.parent.is_dir() or not os.access(path.parent, os.W_OK):
+            return JSONResponse(status_code=503, content={
+                "detail": "Web updates are unavailable; install the systemd update path unit."
+            })
+        path.write_text(f"{datetime.now(UTC).isoformat()} {uuid.uuid4().hex}\n", encoding="utf-8")
+        return {"accepted": True, "version": __version__}
 
     def repository_unavailable():
         error = app.state.service.repository.availability_error()

@@ -25,6 +25,9 @@ def test_linux_installer_has_atomic_release_and_auto_update_units():
     assert 'rm -rf "$target"' in script
     assert 'mv -Tf "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current"' in script
     assert "esxi-vm-backup-update.timer" in script
+    assert "esxi-vm-backup-update.path" in script
+    assert "PathChanged=/run/esxi-vm-backup/update-request" in script
+    assert "RuntimeDirectory=esxi-vm-backup" in script
     assert "Persistent=true" in script
     assert "EnvironmentFile=-$UPDATE_ENV" in script
     assert "CHANGE-ME" in script

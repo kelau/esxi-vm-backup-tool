@@ -153,6 +153,9 @@ Wants=network-online.target
 Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
+RuntimeDirectory=esxi-vm-backup
+RuntimeDirectoryMode=0750
+Environment=ESXI_BACKUP_UPDATE_REQUEST=/run/esxi-vm-backup/update-request
 ExecStart=$INSTALL_ROOT/current/bin/esxi-backup web --config $CONFIG_DIR/config.toml --host 0.0.0.0 --port $WEB_PORT
 Restart=on-failure
 RestartSec=10
@@ -187,8 +190,21 @@ RandomizedDelaySec=2h
 WantedBy=timers.target
 EOF
 
+cat >/etc/systemd/system/esxi-vm-backup-update.path <<'EOF'
+[Unit]
+Description=Watch for ESXi VM Backup Tool web update requests
+
+[Path]
+PathChanged=/run/esxi-vm-backup/update-request
+Unit=esxi-vm-backup-update.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable --now esxi-vm-backup-update.timer
+systemctl enable --now esxi-vm-backup-update.path
 systemctl enable esxi-vm-backup.service
 if [ "$UPDATE_ONLY" = false ]; then
   open_web_firewall_port

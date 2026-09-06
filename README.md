@@ -45,6 +45,11 @@ environment installs successfully. Disable automatic updates with
 `sudo systemctl disable --now esxi-vm-backup-update.timer`. Previous environments remain under
 `/opt/esxi-vm-backup/releases` for manual rollback.
 
+Linux installations also show an **Update** link in the dashboard. After confirmation, it writes
+an unprivileged request into the service runtime directory; a narrowly scoped systemd path unit
+then starts the root-owned updater. The web process receives no sudo or general service-control
+permission. Installing an update restarts the web service and may interrupt active backup jobs.
+
 On apt, dnf, yum, and zypper systems, the installer installs curl, CA certificates, Python 3,
 pip, and venv support when needed. Python 3.11 or newer is required. It opens TCP port 8080 when
 ufw or firewalld is active; otherwise it prints the port that must be allowed manually. To use a

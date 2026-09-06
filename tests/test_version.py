@@ -8,4 +8,4 @@ def test_version_is_exposed_by_cli():
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == __version__ == "0.8.1"
+    assert result.stdout.strip() == __version__ == "0.8.2"

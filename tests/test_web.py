@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.8.1" in response.text
+    assert "v0.8.2" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -336,6 +336,33 @@ def test_home_assistant_api_can_omit_vm_attributes(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert "vms" not in response.json()
+
+
+def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path / "repository"),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    request_path = tmp_path / "run" / "update-request"
+    request_path.parent.mkdir()
+    monkeypatch.setenv("ESXI_BACKUP_UPDATE_REQUEST", str(request_path))
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    client = TestClient(create_app())
+
+    dashboard = client.get("/")
+    response = client.post("/api/v1/update")
+    status = client.get("/api/v1/update/status").json()
+
+    assert 'id="update-app"' in dashboard.text
+    assert "Active backups may be interrupted" in dashboard.text
+    assert response.status_code == 202
+    assert response.json()["accepted"] is True
+    assert request_path.read_text(encoding="utf-8")
+    assert status["enabled"] is True
+    assert status["version"] == "0.8.2"
+    assert status["requested_at"] is not None
 
 
 def test_settings_can_pin_current_esxi_ssh_key(tmp_path, monkeypatch):
