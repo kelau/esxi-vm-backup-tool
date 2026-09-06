@@ -103,7 +103,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.6.3" in response.text
+    assert "v0.7.0" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -165,6 +165,30 @@ def test_vm_details_api_combines_esxi_and_backup_data(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["cpu"] == 2
     assert response.json()["backups"] == []
+
+
+def test_dashboard_survives_disconnected_repository(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr(
+        service.repository, "availability_error", lambda: "Backup repository is unavailable"
+    )
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    client = TestClient(create_app())
+
+    dashboard = client.get("/")
+    repository = client.get("/api/v1/repository")
+
+    assert dashboard.status_code == 200
+    assert "Backup storage disconnected" in dashboard.text
+    assert "demo" in dashboard.text
+    assert "Actions are disabled" in dashboard.text
+    assert repository.status_code == 503
+    assert "unavailable" in repository.json()["detail"]
 
 
 def test_datastores_page_persists_inventory_snapshot(tmp_path, monkeypatch):

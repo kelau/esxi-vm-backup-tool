@@ -23,7 +23,9 @@ class BackupService:
         self.config = config
         self.client_factory = client_factory
         self.repository = BackupRepository(
-            Path(config.repository), config.chunk_size_mib * 1024 * 1024, config.compression_level
+            Path(config.repository), config.chunk_size_mib * 1024 * 1024,
+            config.compression_level,
+            Path(config.secondary_repository) if config.secondary_repository else None,
         )
         self._cancel_events: dict[str, threading.Event] = {}
         self._active_vm_ids: set[str] = set()
@@ -90,6 +92,8 @@ class BackupService:
         return details
 
     def backup(self, identity: str, quiesce: bool | None = None) -> BackupRecord:
+        if error := self.repository.availability_error():
+            raise RuntimeError(error)
         backup_id = uuid.uuid4().hex
         with self.client_factory(self.config.server) as client:
             vm = client.find_vm(identity)
@@ -272,6 +276,7 @@ class BackupService:
                     backup_id, logical=logical, stored=stored,
                     repository_bytes=sum(referenced.values()), virtual=virtual,
                 )
+                self.repository.sync_mirror_background()
             self._end_backup(backup_id, vm._moId)
         return self.repository.list(record.vm_id)[0]
 
@@ -388,6 +393,7 @@ class BackupService:
         try:
             output = self.export_ova(backup_id, destination)
             self.repository.finish_ova_export(backup_id, output)
+            self.repository.sync_mirror_background()
         except Exception as exc:
             self.repository.fail_ova_export(backup_id, str(exc))
             raise

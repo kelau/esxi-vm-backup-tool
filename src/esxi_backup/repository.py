@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -66,22 +67,162 @@ class ChunkStream(io.RawIOBase):
 class BackupRepository:
     """Content-addressed, compressed chunk repository with SQLite metadata."""
 
-    def __init__(self, root: Path, chunk_size: int = 8 * 1024 * 1024, level: int = 6):
-        self.root = root.resolve()
+    def __init__(
+        self, root: Path, chunk_size: int = 8 * 1024 * 1024, level: int = 6,
+        secondary_root: Path | None = None,
+    ):
+        self.primary_root = root.resolve()
+        self.secondary_root = secondary_root.resolve() if secondary_root else None
+        if self.secondary_root == self.primary_root:
+            raise ValueError("Primary and secondary repositories must be different locations")
+        self.root = self._select_initial_root()
         self.chunks = self.root / "chunks"
         self.manifests = self.root / "manifests"
+        self.catalog_path = self.root / "catalog.sqlite3"
         self.chunk_size = chunk_size
         self.compression_level = level
         self.decompressor = zstandard.ZstdDecompressor()
         self._write_lock = threading.Lock()
         self._db_lock = threading.RLock()
-        self.chunks.mkdir(parents=True, exist_ok=True)
-        self.manifests.mkdir(parents=True, exist_ok=True)
+        self._mirror_lock = threading.Lock()
+        self.mirror_error: str | None = None
+        self.last_mirror_at: str | None = None
+        volume_available = Path(self.root.anchor).exists() if self.root.anchor else True
+        self._ephemeral_catalog = not volume_available
+        if volume_available:
+            self.chunks.mkdir(parents=True, exist_ok=True)
+            self.manifests.mkdir(parents=True, exist_ok=True)
         # FastAPI executes synchronous routes in worker threads. SQLite serializes writes,
         # and this connection must therefore be allowed to follow the service across them.
-        self.db = sqlite3.connect(self.root / "catalog.sqlite3", check_same_thread=False)
+        self.db = sqlite3.connect(
+            ":memory:" if self._ephemeral_catalog else self.catalog_path,
+            check_same_thread=False,
+        )
         self.db.row_factory = sqlite3.Row
         self._migrate()
+
+    @staticmethod
+    def _volume_available(root: Path) -> bool:
+        return Path(root.anchor).exists() if root.anchor else True
+
+    def _select_initial_root(self) -> Path:
+        primary_catalog = (self.primary_root / "catalog.sqlite3").is_file()
+        secondary_catalog = bool(
+            self.secondary_root and (self.secondary_root / "catalog.sqlite3").is_file()
+        )
+        if primary_catalog or (self._volume_available(self.primary_root) and not secondary_catalog):
+            return self.primary_root
+        if secondary_catalog:
+            return self.secondary_root
+        return self.primary_root
+
+    def _set_paths(self, root: Path) -> None:
+        self.root = root
+        self.chunks = root / "chunks"
+        self.manifests = root / "manifests"
+        self.catalog_path = root / "catalog.sqlite3"
+
+    def _failover(self) -> bool:
+        alternate = (
+            self.secondary_root if self.root == self.primary_root else self.primary_root
+        )
+        if not alternate or not (alternate / "catalog.sqlite3").is_file():
+            return False
+        try:
+            replacement = sqlite3.connect(
+                alternate / "catalog.sqlite3", check_same_thread=False
+            )
+            replacement.row_factory = sqlite3.Row
+            replacement.execute("SELECT 1").fetchone()
+        except sqlite3.Error:
+            return False
+        self.db = replacement
+        self._set_paths(alternate)
+        self._ephemeral_catalog = False
+        return True
+
+    def sync_mirror(self) -> bool:
+        target = self.secondary_root if self.root == self.primary_root else self.primary_root
+        if not target:
+            return False
+        if not self._volume_available(target):
+            self.mirror_error = f"Mirror repository is unavailable: {target}"
+            return False
+        with self._mirror_lock:
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+                for folder in ("chunks", "manifests", "exports"):
+                    source_folder, target_folder = self.root / folder, target / folder
+                    source_files = set()
+                    if source_folder.exists():
+                        for source in source_folder.rglob("*"):
+                            if not source.is_file():
+                                continue
+                            relative = source.relative_to(source_folder)
+                            source_files.add(relative)
+                            destination = target_folder / relative
+                            if destination.is_file():
+                                source_stat, destination_stat = source.stat(), destination.stat()
+                                if source_stat.st_size == destination_stat.st_size \
+                                        and source_stat.st_mtime_ns == destination_stat.st_mtime_ns:
+                                    continue
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            staged = destination.with_name(destination.name + ".mirror")
+                            shutil.copy2(source, staged)
+                            os.replace(staged, destination)
+                    if folder != "chunks" and target_folder.exists():
+                        for stale in target_folder.rglob("*"):
+                            if stale.is_file() and (
+                                stale.relative_to(target_folder) not in source_files
+                            ):
+                                stale.unlink()
+                temporary = target / "catalog.sqlite3.mirror"
+                temporary.unlink(missing_ok=True)
+                mirror_db = sqlite3.connect(temporary)
+                try:
+                    with self._db_lock:
+                        self.db.backup(mirror_db)
+                finally:
+                    mirror_db.close()
+                os.replace(temporary, target / "catalog.sqlite3")
+                self.last_mirror_at = datetime.now(UTC).isoformat()
+                self.mirror_error = None
+                return True
+            except (OSError, sqlite3.Error) as exc:
+                self.mirror_error = str(exc)
+                return False
+
+    def sync_mirror_background(self) -> None:
+        if self.secondary_root and not self._mirror_lock.locked():
+            threading.Thread(target=self.sync_mirror, daemon=True).start()
+
+    def availability_error(self) -> str | None:
+        if self._ephemeral_catalog:
+            if self._failover():
+                return None
+            return (
+                f"Backup repository was unavailable when the service started: {self.root}. "
+                "Reconnect it and restart the service."
+            )
+        if not self.root.is_dir():
+            if self._failover():
+                return None
+            return f"Backup repository is unavailable: {self.root}"
+        if not self.catalog_path.is_file():
+            if self._failover():
+                return None
+            return f"Backup catalog is unavailable: {self.catalog_path}"
+        try:
+            with self._db_lock:
+                self.db.execute("SELECT 1").fetchone()
+        except (OSError, sqlite3.Error) as exc:
+            if self._failover():
+                return None
+            return f"Backup repository is unavailable: {exc}"
+        return None
+
+    def is_available(self) -> bool:
+        return self.availability_error() is None
 
     @synchronized_db
     def _migrate(self) -> None:
@@ -541,7 +682,7 @@ class BackupRepository:
         return OvaExportRecord.model_validate(dict(row)) if row else None
 
     @synchronized_db
-    def stats(self) -> dict[str, int]:
+    def stats(self) -> dict:
         chunk_bytes = self.db.execute(
             "SELECT COALESCE(SUM(stored_size),0) FROM chunk_index"
         ).fetchone()[0]
@@ -564,6 +705,11 @@ class BackupRepository:
             "recovery_points": self.db.execute(
                 "SELECT COUNT(*) FROM backups WHERE status='success'"
             ).fetchone()[0],
+            "active_repository": str(self.root),
+            "primary_repository": str(self.primary_root),
+            "secondary_repository": str(self.secondary_root) if self.secondary_root else None,
+            "last_mirror_at": self.last_mirror_at,
+            "mirror_error": self.mirror_error,
         }
 
     @synchronized_db

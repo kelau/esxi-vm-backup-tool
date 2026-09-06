@@ -39,6 +39,7 @@
     {% endif %}
     <h2>Backup storage</h2><div class="grid">
       <label>Repository path<input name="repository" value="{{ config.repository }}" required></label>
+      <label>Secondary repository<input name="secondary_repository" value="{{ config.secondary_repository or '' }}" placeholder="Optional mirrored location"><small>Receives a complete passive copy and can take over if the primary disappears.</small></label>
       <label>Chunk size (MiB)<input name="chunk_size_mib" type="number" min="1" max="256" value="{{ config.chunk_size_mib }}" required></label>
       <label>Compression level<input name="compression_level" type="number" min="1" max="19" value="{{ config.compression_level }}" required></label>
       <label>Pipeline workers<input name="pipeline_workers" type="number" min="1" max="8" value="{{ config.pipeline_workers }}" required><small>Parallel hash and compression workers per transfer.</small></label>

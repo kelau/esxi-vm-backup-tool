@@ -29,6 +29,24 @@ window and bounded SFTP read-ahead to avoid latency-bound small reads.
 
 ## Install
 
+### One-line Linux installer
+
+Review [`scripts/install.sh`](scripts/install.sh), then install the latest GitHub release on a
+systemd-based Linux host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kelau/esxi-vm-backup-tool/main/scripts/install.sh | sudo sh
+```
+
+Edit `/etc/esxi-vm-backup/config.toml`, then run
+`sudo systemctl start esxi-vm-backup`. The installer creates a persistent daily systemd timer that
+checks GitHub Releases and atomically switches to a newer version only after its isolated virtual
+environment installs successfully. Disable automatic updates with
+`sudo systemctl disable --now esxi-vm-backup-update.timer`. Previous environments remain under
+`/opt/esxi-vm-backup/releases` for manual rollback.
+
+### Python package
+
 Python 3.11+ is required.
 
 ```bash
@@ -84,6 +102,14 @@ The Datastores page records persistent snapshots of ESXi datastore capacity, fre
 devices, and registered VM placement. When trusted SSH is enabled, refreshes also query read-only
 SMART attributes with `esxcli`; the last successful inventory remains visible if a device or host
 later becomes unavailable.
+
+An optional secondary repository can be configured on the Settings page. The app incrementally
+mirrors chunks, manifests, OVA exports, and a consistent SQLite catalog after completed changes.
+It prefers the primary location and can open the secondary copy when the active repository is no
+longer available. Put the mirror on a different physical device or network target; mirroring is
+redundancy, not a substitute for offline or immutable backups. A transfer interrupted while the
+active device is failing may still fail, but the next request can switch to the last completed
+mirror state.
 
 The VM table's **Backup size** is the compressed footprint of all unique chunks referenced by that
 recovery point. **New data** in Recent jobs is only the additional repository space written during

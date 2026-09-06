@@ -1,4 +1,6 @@
 repository = "./backups"
+# Optional passive mirror. Use a different physical device or network location.
+secondary_repository = ""
 chunk_size_mib = 8
 compression_level = 6
 pipeline_workers = 2

@@ -162,3 +162,32 @@ def test_delete_vm_preserves_shared_chunks_and_removes_unique_data(tmp_path):
             f"{shared[0]['sha256']}.zst").exists()
     assert not (repository.chunks / unique[0]["sha256"][:2] /
                 f"{unique[0]['sha256']}.zst").exists()
+
+
+def test_secondary_repository_receives_recovery_data_and_catalog(tmp_path):
+    primary, secondary = tmp_path / "primary", tmp_path / "secondary"
+    repository = BackupRepository(primary, chunk_size=4, secondary_root=secondary)
+    chunks, _, _ = repository.store_stream(BytesIO(b"disk-data"))
+    repository.create(BackupRecord(
+        id="backup-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.SUCCESS
+    ))
+    repository.write_manifest("backup-1", {
+        "backup_id": "backup-1", "vm_id": "vm-1",
+        "files": [{"name": "disk.vmdk", "chunks": chunks}],
+    })
+
+    assert repository.sync_mirror()
+
+    mirrored = BackupRepository(secondary)
+    assert mirrored.list("vm-1")[0].id == "backup-1"
+    assert (secondary / "manifests" / "backup-1.json").is_file()
+    assert len(list((secondary / "chunks").rglob("*.zst"))) == len(
+        list((primary / "chunks").rglob("*.zst"))
+    )
+
+    repository.db.close()
+    (primary / "catalog.sqlite3").unlink()
+
+    assert repository.availability_error() is None
+    assert repository.root == secondary
+    assert repository.list("vm-1")[0].id == "backup-1"

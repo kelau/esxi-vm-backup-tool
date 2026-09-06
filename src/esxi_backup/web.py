@@ -46,6 +46,22 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             connection_error = None
         except Exception as exc:
             vms, connection_error = [], str(exc)
+        repository_error = app.state.service.repository.availability_error()
+        if repository_error:
+            vm_states = {
+                vm.id: ("live" if vm.connection_state == "connected" else "inaccessible")
+                for vm in vms
+            }
+            return templates.TemplateResponse(request, "dashboard.html", {
+                "vms": vms, "backups": [], "latest": {},
+                "connection_error": connection_error, "repository_error": repository_error,
+                "repository_available": False, "config": app.state.service.config,
+                "schedules": {}, "schedule_info": {}, "ova_exports": {},
+                "ova_capable": set(), "restores": {}, "vm_states": vm_states,
+                "latest_recovery": {}, "repository_vm_ids": set(),
+                "repository_stats": {"total_bytes": 0, "chunk_bytes": 0,
+                                     "ova_bytes": 0, "recovery_points": 0},
+            })
         backups = app.state.service.repository.list()
         latest_job = {}
         latest = {}
@@ -103,7 +119,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "vm_states": vm_states,
             "latest_recovery": latest_recovery,
             "repository_vm_ids": set(latest_job),
+            "repository_error": None, "repository_available": True,
         })
+
+    def repository_unavailable():
+        error = app.state.service.repository.availability_error()
+        return JSONResponse(status_code=503, content={"detail": error}) if error else None
 
     @app.get("/api/v1/vms")
     def api_vms():
@@ -111,18 +132,26 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/vms/{vm_id}")
     def api_vm_details(vm_id: str, repository_only: bool = False):
+        if response := repository_unavailable():
+            return response
         return app.state.service.vm_details(vm_id, repository_only=repository_only)
 
     @app.get("/api/v1/backups")
     def api_backups():
+        if response := repository_unavailable():
+            return response
         return app.state.service.repository.list()
 
     @app.get("/api/v1/repository")
     def api_repository():
+        if response := repository_unavailable():
+            return response
         return app.state.service.repository.stats()
 
     @app.get("/api/v1/storage")
     def api_storage(refresh: bool = False):
+        if response := repository_unavailable():
+            return response
         if refresh or app.state.service.repository.latest_storage_snapshot() is None:
             return app.state.service.refresh_storage_inventory()
         return app.state.service.repository.latest_storage_snapshot()
@@ -137,34 +166,45 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 else app.state.service.repository.latest_storage_snapshot()
             )
         except Exception as exc:
-            snapshot = app.state.service.repository.latest_storage_snapshot()
+            snapshot = app.state.service.repository.latest_storage_snapshot() \
+                if app.state.service.repository.is_available() else None
             error = str(exc)
         return templates.TemplateResponse(request, "datastores.html", {
             "snapshot": snapshot, "error": error,
-            "history": app.state.service.repository.storage_snapshots(),
+            "history": app.state.service.repository.storage_snapshots()
+            if app.state.service.repository.is_available() else [],
         })
 
     @app.get("/api/v1/ova-exports")
     def api_ova_exports():
+        if response := repository_unavailable():
+            return response
         return app.state.service.repository.list_ova_exports()
 
     @app.get("/api/v1/restores")
     def api_restores():
+        if response := repository_unavailable():
+            return response
         return app.state.service.repository.list_restores()
 
     @app.get("/api/v1/schedules")
     def api_schedules():
+        if response := repository_unavailable():
+            return response
         return app.state.scheduler.policies()
 
     @app.get("/schedules", response_class=HTMLResponse)
     def schedules_page(request: Request):
         try:
             vms = app.state.service.list_vms()
-            error = None
+            if repository_error := app.state.service.repository.availability_error():
+                schedules, error = [], repository_error
+            else:
+                schedules, error = app.state.scheduler.policies(), None
         except Exception as exc:
-            vms, error = [], str(exc)
+            vms, schedules, error = [], [], str(exc)
         return templates.TemplateResponse(request, "schedules.html", {
-            "schedules": app.state.scheduler.policies(), "vms": vms, "error": error,
+            "schedules": schedules, "vms": vms, "error": error,
         })
 
     @app.post("/schedules")
@@ -175,21 +215,29 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         weekday: int = Form(default=0), quiesce: bool = Form(default=False),
         build_ova: bool = Form(default=False),
     ):
+        if response := repository_unavailable():
+            return response
         schedule = SchedulePolicy(
             id=schedule_id or uuid.uuid4().hex, name=name.strip(), vm_ids=vm_ids or [],
             frequency=frequency, hour=hour, minute=minute, weekday=weekday,
             quiesce=quiesce, build_ova=build_ova,
         )
         app.state.scheduler.apply_policy(schedule)
+        app.state.service.repository.sync_mirror_background()
         return RedirectResponse("/schedules", status_code=303)
 
     @app.post("/schedules/{schedule_id}/delete")
     def delete_schedule_policy(schedule_id: str):
+        if response := repository_unavailable():
+            return response
         app.state.scheduler.delete_policy(schedule_id)
+        app.state.service.repository.sync_mirror_background()
         return RedirectResponse("/schedules", status_code=303)
 
     @app.put("/api/v1/vms/{vm_id}/schedule")
     def api_schedule(vm_id: str, schedule: BackupSchedule):
+        if response := repository_unavailable():
+            return response
         if schedule.vm_id != vm_id:
             return JSONResponse(status_code=400, content={"detail": "VM ID mismatch"})
         return app.state.scheduler.apply(schedule)
@@ -223,6 +271,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         ssh_password: str = Form(default=""),
         ssh_verify_host_key: bool = Form(default=False),
         repository: str = Form(),
+        secondary_repository: str = Form(default=""),
         chunk_size_mib: int = Form(),
         compression_level: int = Form(),
         pipeline_workers: int = Form(),
@@ -250,7 +299,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                     ssh_verify_host_key=ssh_verify_host_key,
                     ssh_host_key=current.server.ssh_host_key,
                 ),
-                repository=repository.strip(), chunk_size_mib=chunk_size_mib,
+                repository=repository.strip(),
+                secondary_repository=secondary_repository.strip() or None,
+                chunk_size_mib=chunk_size_mib,
                 compression_level=compression_level, pipeline_workers=pipeline_workers,
                 parallel_disks=parallel_disks, quiesce=quiesce,
                 retention=RetentionConfig(
@@ -263,6 +314,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             app.state.service = BackupService(updated)
             app.state.scheduler = BackupScheduler(app.state.service)
             app.state.scheduler.start()
+            app.state.service.repository.sync_mirror_background()
         except Exception as exc:
             return templates.TemplateResponse(request, "settings.html", {
                 "config": current, "saved": False, "error": str(exc),
@@ -297,6 +349,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         minute: int = Form(),
         weekday: int = Form(default=0),
     ):
+        if response := repository_unavailable():
+            return response
         if frequency not in {"disabled", "daily", "weekly"}:
             return JSONResponse(status_code=422, content={"detail": "Invalid frequency"})
         app.state.scheduler.apply(BackupSchedule(
@@ -307,11 +361,15 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/vms/{vm_id}/backups", status_code=202)
     def api_backup(vm_id: str, tasks: BackgroundTasks):
+        if response := repository_unavailable():
+            return response
         tasks.add_task(app.state.service.backup, vm_id)
         return {"accepted": True, "vm_id": vm_id}
 
     @app.post("/vms/{vm_id}/backups")
     def html_backup(vm_id: str, tasks: BackgroundTasks):
+        if response := repository_unavailable():
+            return response
         tasks.add_task(app.state.service.backup, vm_id)
         return RedirectResponse("/", status_code=303)
 
@@ -319,6 +377,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def delete_repository_vm(vm_id: str):
         try:
             result = app.state.service.repository.delete_vm(vm_id)
+            app.state.service.repository.sync_mirror_background()
         except RuntimeError as exc:
             return JSONResponse(status_code=409, content={"detail": str(exc)})
         return JSONResponse(content=result)

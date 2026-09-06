@@ -104,6 +104,9 @@ class BackupScheduler:
         self.service.repository.delete_schedule_policy(schedule_id)
 
     def _run_policy(self, schedule: SchedulePolicy) -> None:
+        if error := self.service.repository.availability_error():
+            log.error("Skipping schedule %s: %s", schedule.name, error)
+            return
         for vm_id in schedule.vm_ids:
             try:
                 record = self.service.backup(vm_id, quiesce=schedule.quiesce)
@@ -113,6 +116,9 @@ class BackupScheduler:
                 log.exception("Scheduled backup failed for %s in %s", vm_id, schedule.name)
 
     def _run_backup(self, vm_id: str) -> None:
+        if error := self.service.repository.availability_error():
+            log.error("Skipping scheduled backup for %s: %s", vm_id, error)
+            return
         try:
             self.service.backup(vm_id)
         except Exception:

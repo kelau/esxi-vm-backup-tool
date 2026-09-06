@@ -38,6 +38,7 @@ class RetentionConfig(BaseModel):
 class AppConfig(BaseModel):
     server: ServerConfig
     repository: str = "./backups"
+    secondary_repository: str | None = None
     chunk_size_mib: Annotated[int, Field(ge=1, le=256)] = 8
     compression_level: Annotated[int, Field(ge=1, le=19)] = 6
     pipeline_workers: Annotated[int, Field(ge=1, le=8)] = 2
