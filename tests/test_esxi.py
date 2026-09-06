@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from esxi_backup.esxi import EsxiClient, media_health
+from esxi_backup.esxi import EsxiClient, SftpExportStream, media_health
 from esxi_backup.models import ServerConfig
 
 
@@ -50,6 +50,32 @@ def test_normal_ssd_wear_does_not_trigger_watch_too_early():
     assert health == {
         "score": 79, "label": "Healthy", "notes": ["Media wear indicator: 79%"]
     }
+
+
+def test_sftp_export_uses_bounded_readv_windows():
+    class Handle:
+        calls = []
+
+        def readv(self, chunks, max_concurrent_prefetch_requests=None):
+            self.calls.append((chunks, max_concurrent_prefetch_requests))
+            return [b"x" * length for _offset, length in chunks]
+
+        def close(self):
+            pass
+
+    class Sftp:
+        def close(self):
+            pass
+
+    handle = Handle()
+    stream = SftpExportStream(Sftp(), handle, 20 * 1024 * 1024)
+
+    assert len(stream.read(1024 * 1024)) == 1024 * 1024
+    assert len(handle.calls) == 1
+    assert sum(length for _offset, length in handle.calls[0][0]) == 8 * 1024 * 1024
+    assert handle.calls[0][1] == 8
+    assert len(stream.buffer) == 7 * 1024 * 1024
+    assert len(stream.read()) == 19 * 1024 * 1024
 
 
 def test_inventory_tolerates_vm_without_config():

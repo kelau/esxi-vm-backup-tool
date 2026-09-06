@@ -542,7 +542,7 @@ class BackupRepository:
                     continue
                 pending.append(executor.submit(prepare, bytes(buffer)))
                 buffer.clear()
-                if len(pending) >= workers * 2:
+                if len(pending) >= workers:
                     consume(pending.popleft())
             if buffer:
                 pending.append(executor.submit(prepare, bytes(buffer)))

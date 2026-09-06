@@ -139,10 +139,29 @@ class SftpExportStream:
     def __init__(self, sftp, handle, size: int):
         self.sftp = sftp
         self.handle = handle
+        self.size = size
+        self.offset = 0
+        self.buffer = bytearray()
         self.headers = {"Content-Length": str(size)}
 
     def read(self, size=-1):
-        return self.handle.read(size)
+        requested = len(self.buffer) + self.size - self.offset if size < 0 else size
+        while len(self.buffer) < requested and self.offset < self.size:
+            window = min(8 * 1024 * 1024, self.size - self.offset)
+            chunks = []
+            chunk_offset = self.offset
+            remaining = window
+            while remaining:
+                length = min(1024 * 1024, remaining)
+                chunks.append((chunk_offset, length))
+                chunk_offset += length
+                remaining -= length
+            for data in self.handle.readv(chunks, max_concurrent_prefetch_requests=8):
+                self.buffer.extend(data)
+            self.offset += window
+        output = bytes(self.buffer[:requested])
+        del self.buffer[:requested]
+        return output
 
     def __enter__(self):
         return self
@@ -578,7 +597,6 @@ class EsxiClient:
             sftp = self._open_transfer_sftp()
             size = int(sftp.stat(path).st_size)
             handle = sftp.open(path, "rb", bufsize=1024 * 1024)
-            handle.prefetch(size, max_concurrent_requests=64)
             return SftpExportStream(sftp, handle, size)
         context = ssl.create_default_context()
         if not self.config.verify_ssl:
