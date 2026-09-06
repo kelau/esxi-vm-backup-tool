@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.8.3" in response.text
+    assert "v0.9.0" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -355,14 +355,39 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     response = client.post("/api/v1/update")
     status = client.get("/api/v1/update/status").json()
 
-    assert 'id="update-app"' in dashboard.text
-    assert "Active backups may be interrupted" in dashboard.text
+    assert 'href="/updates"' in dashboard.text
+    assert "app-shell" in dashboard.text
     assert response.status_code == 202
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.8.3"
+    assert status["version"] == "0.9.0"
     assert status["requested_at"] is not None
+
+
+def test_vm_can_be_excluded_filtered_and_included(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path / "repository"),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    client = TestClient(create_app(tmp_path / "config.toml"))
+
+    excluded = client.post("/vms/vm-1/exclude")
+    dashboard = client.get("/")
+    blocked = client.post("/api/v1/vms/vm-1/backups")
+    included = client.post("/vms/vm-1/include")
+
+    assert excluded.json()["excluded"] is True
+    assert 'data-vm-id="vm-1" data-vm-state="live" data-excluded="true"' in dashboard.text
+    assert "hide-excluded-vms" in dashboard.text
+    assert "hide-inaccessible-vms" in dashboard.text
+    assert "Include in backups" in dashboard.text
+    assert blocked.status_code == 409
+    assert included.json()["excluded"] is False
+    assert service.config.excluded_vm_ids == []
 
 
 def test_settings_can_pin_current_esxi_ssh_key(tmp_path, monkeypatch):

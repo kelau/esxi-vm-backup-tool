@@ -28,6 +28,7 @@ def test_linux_installer_has_atomic_release_and_auto_update_units():
     assert "esxi-vm-backup-update.path" in script
     assert "PathChanged=/run/esxi-vm-backup/update-request" in script
     assert "RuntimeDirectory=esxi-vm-backup" in script
+    assert "StandardOutput=append:$DATA_DIR/update.log" in script
     assert "Persistent=true" in script
     assert "EnvironmentFile=-$UPDATE_ENV" in script
     assert "CHANGE-ME" in script

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -30,6 +31,10 @@ templates.env.globals["app_version"] = __version__
 optional_vm_ids = Form(default=None)
 
 
+def _version_key(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", value))
+
+
 def create_app(config_path: Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(instance: FastAPI):
@@ -44,6 +49,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app.state.update_request_path = Path(os.environ.get(
         "ESXI_BACKUP_UPDATE_REQUEST", "/run/esxi-vm-backup/update-request"
     ))
+    app.state.update_log_path = Path(os.environ.get(
+        "ESXI_BACKUP_UPDATE_LOG", "/var/lib/esxi-vm-backup/update.log"
+    ))
+    app.state.release_cache = {"checked_at": None, "payload": None}
     app.state.storage_refresh = {
         "status": "idle", "started_at": None, "finished_at": None, "error": None,
     }
@@ -175,6 +184,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "requested_at": (
                 datetime.fromtimestamp(path.stat().st_mtime, UTC) if path.exists() else None
             ),
+            "log": (
+                app.state.update_log_path.read_text(encoding="utf-8", errors="replace")[-50000:]
+                if app.state.update_log_path.is_file() else ""
+            ),
         }
 
     @app.post("/api/v1/update", status_code=202)
@@ -184,8 +197,83 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             return JSONResponse(status_code=503, content={
                 "detail": "Web updates are unavailable; install the systemd update path unit."
             })
-        path.write_text(f"{datetime.now(UTC).isoformat()} {uuid.uuid4().hex}\n", encoding="utf-8")
+        if app.state.update_log_path.parent.is_dir():
+            app.state.update_log_path.write_text(
+                "Update requested from web UI.\n", encoding="utf-8"
+            )
+        path.write_text(
+            f"{datetime.now(UTC).isoformat()} {uuid.uuid4().hex}\n", encoding="utf-8"
+        )
         return {"accepted": True, "version": __version__}
+
+    @app.get("/updates", response_class=HTMLResponse)
+    def updates_page(request: Request):
+        return templates.TemplateResponse(request, "updates.html", {})
+
+    @app.get("/api/v1/update/check")
+    def api_update_check():
+        now = datetime.now(UTC)
+        cached_at = app.state.release_cache["checked_at"]
+        if not cached_at or (now - cached_at).total_seconds() > 900:
+            try:
+                response = httpx.get(
+                    "https://api.github.com/repos/kelau/esxi-vm-backup-tool/releases",
+                    headers={"Accept": "application/vnd.github+json"}, timeout=8,
+                )
+                response.raise_for_status()
+                releases = response.json()[:10]
+            except Exception as exc:
+                return JSONResponse(status_code=502, content={"detail": str(exc)})
+            latest = next((
+                item for item in releases
+                if not item.get("draft") and not item.get("prerelease")
+            ), None)
+            payload = {
+                "current_version": __version__,
+                "latest_version": (latest or {}).get("tag_name", "v" + __version__).lstrip("v"),
+                "releases": [{key: item.get(key) for key in (
+                    "tag_name", "name", "body", "published_at", "html_url"
+                )} for item in releases],
+            }
+            app.state.release_cache.update(checked_at=now, payload=payload)
+        payload = dict(app.state.release_cache["payload"])
+        payload["available"] = _version_key(payload["latest_version"]) > _version_key(__version__)
+        payload["enabled"] = app.state.update_request_path.parent.is_dir()
+        return payload
+
+    @app.get("/api/v1/notifications")
+    def api_notifications():
+        if app.state.service.repository.availability_error():
+            return {"settings": {"count": 1, "message": "Backup repository unavailable"}}
+        backups = app.state.service.repository.list()[:25]
+        snapshot = app.state.service.repository.latest_storage_snapshot() or {}
+        unhealthy = sum(
+            (device.get("media_health") or {}).get("label") in {"Watch", "Warning", "Critical"}
+            for device in snapshot.get("devices", [])
+        )
+        scheduled = {
+            vm_id for policy in app.state.scheduler.policies()
+            if policy.frequency != "disabled" for vm_id in policy.vm_ids
+        }
+        inventory_ids = {
+            vm["id"] for datastore in snapshot.get("datastores", [])
+            for vm in datastore.get("vms", [])
+        }
+        notices = {}
+        failed = sum(item.status == "failed" for item in backups)
+        if failed:
+            notices["dashboard"] = {"count": failed, "message": "Recent failed backup jobs"}
+        if unhealthy:
+            notices["datastores"] = {"count": unhealthy, "message": "Devices need attention"}
+        unscheduled = len(inventory_ids - scheduled - set(app.state.service.config.excluded_vm_ids))
+        if unscheduled:
+            notices["schedules"] = {"count": unscheduled, "message": "VMs have no active schedule"}
+        if app.state.release_cache["payload"] and (
+            _version_key(app.state.release_cache["payload"]["latest_version"])
+            > _version_key(__version__)
+        ):
+            notices["updates"] = {"count": 1, "message": "Application update available"}
+        return notices
 
     def repository_unavailable():
         error = app.state.service.repository.availability_error()
@@ -387,6 +475,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             vms, schedules, error = [], [], str(exc)
         return templates.TemplateResponse(request, "schedules.html", {
             "schedules": schedules, "vms": vms, "error": error,
+            "config": app.state.service.config,
         })
 
     @app.post("/schedules")
@@ -486,6 +575,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 chunk_size_mib=chunk_size_mib,
                 compression_level=compression_level, pipeline_workers=pipeline_workers,
                 parallel_disks=parallel_disks, quiesce=quiesce,
+                excluded_vm_ids=current.excluded_vm_ids,
                 retention=RetentionConfig(
                     keep_last=keep_last, keep_daily=keep_daily,
                     keep_weekly=keep_weekly, keep_monthly=keep_monthly,
@@ -545,6 +635,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def api_backup(vm_id: str, tasks: BackgroundTasks):
         if response := repository_unavailable():
             return response
+        if vm_id in app.state.service.config.excluded_vm_ids:
+            return JSONResponse(status_code=409, content={"detail": "VM is excluded"})
         tasks.add_task(app.state.service.backup, vm_id)
         return {"accepted": True, "vm_id": vm_id}
 
@@ -552,8 +644,32 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def html_backup(vm_id: str, tasks: BackgroundTasks):
         if response := repository_unavailable():
             return response
+        if vm_id in app.state.service.config.excluded_vm_ids:
+            return JSONResponse(status_code=409, content={"detail": "VM is excluded"})
         tasks.add_task(app.state.service.backup, vm_id)
         return RedirectResponse("/", status_code=303)
+
+    @app.post("/vms/{vm_id}/exclude")
+    def exclude_vm(vm_id: str):
+        excluded = set(app.state.service.config.excluded_vm_ids)
+        excluded.add(vm_id)
+        updated = app.state.service.config.model_copy(update={
+            "excluded_vm_ids": sorted(excluded)
+        })
+        save_config(updated, app.state.config_path)
+        app.state.service.config = updated
+        return JSONResponse(content={"excluded": True, "vm_id": vm_id})
+
+    @app.post("/vms/{vm_id}/include")
+    def include_vm(vm_id: str):
+        updated = app.state.service.config.model_copy(update={
+            "excluded_vm_ids": [
+                item for item in app.state.service.config.excluded_vm_ids if item != vm_id
+            ]
+        })
+        save_config(updated, app.state.config_path)
+        app.state.service.config = updated
+        return JSONResponse(content={"excluded": False, "vm_id": vm_id})
 
     @app.post("/repository/vms/{vm_id}/delete")
     def delete_repository_vm(vm_id: str):

@@ -45,7 +45,8 @@ environment installs successfully. Disable automatic updates with
 `sudo systemctl disable --now esxi-vm-backup-update.timer`. Previous environments remain under
 `/opt/esxi-vm-backup/releases` for manual rollback.
 
-Linux installations also show an **Update** link in the dashboard. After confirmation, it writes
+Linux installations include an **Updates** page that checks GitHub automatically, lists recent
+release notes, and streams installer output while an update runs. After confirmation, it writes
 an unprivileged request into the service runtime directory; a narrowly scoped systemd path unit
 then starts the root-owned updater. The web process receives no sudo or general service-control
 permission. Installing an update restarts the web service and may interrupt active backup jobs.
@@ -125,6 +126,10 @@ The VM table's **Backup size** is the compressed footprint of all unique chunks 
 recovery point. **New data** in Recent jobs is only the additional repository space written during
 that run; shared chunks mean deleting one recovery point may reclaim less than its displayed
 footprint.
+
+VMs can be excluded from the row action menu. Excluded VMs are dimmed, cannot be backed up
+manually, and are skipped by every schedule until included again. VM-table filters can hide
+excluded and inaccessible entries; filter choices persist in the browser.
 
 API endpoints:
 

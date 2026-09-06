@@ -103,6 +103,9 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 \
   "$DATA_DIR" "$DATA_DIR/repository"
+if [ ! -f "$DATA_DIR/update.log" ]; then
+  install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0640 /dev/null "$DATA_DIR/update.log"
+fi
 # Atomic settings saves require directory write access. Update credentials are
 # deliberately stored outside this service-writable directory.
 install -d -o root -g "$SERVICE_USER" -m 0770 "$CONFIG_DIR"
@@ -156,6 +159,7 @@ Group=$SERVICE_USER
 RuntimeDirectory=esxi-vm-backup
 RuntimeDirectoryMode=0750
 Environment=ESXI_BACKUP_UPDATE_REQUEST=/run/esxi-vm-backup/update-request
+Environment=ESXI_BACKUP_UPDATE_LOG=$DATA_DIR/update.log
 ExecStart=$INSTALL_ROOT/current/bin/esxi-backup web --config $CONFIG_DIR/config.toml --host 0.0.0.0 --port $WEB_PORT
 Restart=on-failure
 RestartSec=10
@@ -175,6 +179,8 @@ After=network-online.target
 Type=oneshot
 EnvironmentFile=-$UPDATE_ENV
 ExecStart=/usr/local/sbin/esxi-backup-install --update
+StandardOutput=append:$DATA_DIR/update.log
+StandardError=append:$DATA_DIR/update.log
 EOF
 
 cat >/etc/systemd/system/esxi-vm-backup-update.timer <<'EOF'

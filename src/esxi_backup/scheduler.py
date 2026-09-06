@@ -108,6 +108,9 @@ class BackupScheduler:
             log.error("Skipping schedule %s: %s", schedule.name, error)
             return
         for vm_id in schedule.vm_ids:
+            if vm_id in self.service.config.excluded_vm_ids:
+                log.info("Skipping excluded VM %s in schedule %s", vm_id, schedule.name)
+                continue
             try:
                 record = self.service.backup(vm_id, quiesce=schedule.quiesce)
                 if schedule.build_ova and self.service.supports_ova(record.id):
@@ -116,6 +119,9 @@ class BackupScheduler:
                 log.exception("Scheduled backup failed for %s in %s", vm_id, schedule.name)
 
     def _run_backup(self, vm_id: str) -> None:
+        if vm_id in self.service.config.excluded_vm_ids:
+            log.info("Skipping excluded VM %s", vm_id)
+            return
         if error := self.service.repository.availability_error():
             log.error("Skipping scheduled backup for %s: %s", vm_id, error)
             return

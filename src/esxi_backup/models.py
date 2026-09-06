@@ -44,6 +44,7 @@ class AppConfig(BaseModel):
     pipeline_workers: Annotated[int, Field(ge=1, le=8)] = 2
     parallel_disks: Annotated[int, Field(ge=1, le=4)] = 2
     quiesce: bool = True
+    excluded_vm_ids: list[str] = Field(default_factory=list)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
 

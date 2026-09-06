@@ -92,6 +92,8 @@ class BackupService:
         return details
 
     def backup(self, identity: str, quiesce: bool | None = None) -> BackupRecord:
+        if identity in self.config.excluded_vm_ids:
+            raise RuntimeError("VM is excluded from backups")
         if error := self.repository.availability_error():
             raise RuntimeError(error)
         backup_id = uuid.uuid4().hex
