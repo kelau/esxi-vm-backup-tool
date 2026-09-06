@@ -59,9 +59,11 @@ def media_health(smart: dict[str, list[str]]) -> dict:
 
     score = 100
     notes = []
+    media_fault = False
     health = smart.get("Health Status", ["Unknown"])[0].upper()
     if health not in {"OK", "PASSED", "PASS"}:
         score = min(score, 20)
+        media_fault = True
         notes.append(f"SMART health status is {health.title()}")
     wear = smart.get("Media Wearout Indicator")
     if wear:
@@ -88,18 +90,25 @@ def media_health(smart: dict[str, list[str]]) -> dict:
         # counter). Treat only a positive normalized value as comparable.
         if normalized > 0 and threshold > 0 and normalized <= threshold:
             score = min(score, 20)
+            media_fault = True
             notes.append(f"{name} reached its SMART threshold")
         if raw <= 0:
             continue
+        media_fault = True
         penalty = min(60, 25 + raw) if name in severe else (
             min(40, 10 + raw) if name in reallocations else min(25, 5 + raw)
         )
         score -= penalty
         notes.append(f"{name}: {raw}")
     score = max(0, min(100, score))
-    label = "Healthy" if score >= 90 else "Watch" if score >= 70 else (
-        "Warning" if score >= 40 else "Critical"
-    )
+    if not media_fault and wear:
+        label = "Healthy" if score >= 50 else "Watch" if score >= 25 else (
+            "Warning" if score >= 10 else "Critical"
+        )
+    else:
+        label = "Healthy" if score >= 90 else "Watch" if score >= 70 else (
+            "Warning" if score >= 40 else "Critical"
+        )
     return {"score": score, "label": label, "notes": notes or ["No media faults reported"]}
 
 

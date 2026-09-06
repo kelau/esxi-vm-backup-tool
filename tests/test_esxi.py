@@ -36,6 +36,22 @@ def test_media_health_ignores_esxi_zero_placeholder_normalized_values():
     }
 
 
+def test_normal_ssd_wear_does_not_trigger_watch_too_early():
+    health = media_health({
+        "Health Status": ["OK", "N/A", "N/A", "N/A"],
+        "Media Wearout Indicator": ["79", "0", "79", "441"],
+        "Write Error Count": ["100", "10", "100", "0"],
+        "Reallocated Sector Count": ["100", "10", "100", "0"],
+        "Program Fail Count": ["100", "10", "100", "0"],
+        "Erase Fail Count": ["100", "10", "100", "0"],
+        "Uncorrectable Error Count": ["100", "0", "100", "0"],
+    })
+
+    assert health == {
+        "score": 79, "label": "Healthy", "notes": ["Media wear indicator: 79%"]
+    }
+
+
 def test_inventory_tolerates_vm_without_config():
     client = EsxiClient(ServerConfig(host="host", username="user", password="secret"))
     client._vms = lambda: [SimpleNamespace(

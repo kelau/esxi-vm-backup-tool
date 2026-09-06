@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.9.5" in response.text
+    assert "v0.9.6" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -365,7 +365,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.5"
+    assert status["version"] == "0.9.6"
     assert status["requested_at"] is not None
 
 
