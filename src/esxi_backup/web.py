@@ -244,13 +244,17 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/notifications")
     def api_notifications():
         if app.state.service.repository.availability_error():
-            return {"settings": {"count": 1, "message": "Backup repository unavailable"}}
+            return {"settings": {
+                "count": 1, "message": "Backup repository unavailable",
+                "urgency": "critical",
+            }}
         backups = app.state.service.repository.list()[:25]
         snapshot = app.state.service.repository.latest_storage_snapshot() or {}
-        unhealthy = sum(
-            (device.get("media_health") or {}).get("label") in {"Watch", "Warning", "Critical"}
+        health_labels = [
+            (device.get("media_health") or {}).get("label")
             for device in snapshot.get("devices", [])
-        )
+        ]
+        unhealthy = sum(label in {"Watch", "Warning", "Critical"} for label in health_labels)
         scheduled = {
             vm_id for policy in app.state.scheduler.policies()
             if policy.frequency != "disabled" for vm_id in policy.vm_ids
@@ -262,17 +266,28 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         notices = {}
         failed = sum(item.status == "failed" for item in backups)
         if failed:
-            notices["dashboard"] = {"count": failed, "message": "Recent failed backup jobs"}
+            notices["dashboard"] = {
+                "count": failed, "message": "Recent failed backup jobs",
+                "urgency": "critical",
+            }
         if unhealthy:
-            notices["datastores"] = {"count": unhealthy, "message": "Devices need attention"}
+            notices["datastores"] = {
+                "count": unhealthy, "message": "Devices need attention",
+                "urgency": "critical" if "Critical" in health_labels else "warning",
+            }
         unscheduled = len(inventory_ids - scheduled - set(app.state.service.config.excluded_vm_ids))
         if unscheduled:
-            notices["schedules"] = {"count": unscheduled, "message": "VMs have no active schedule"}
+            notices["schedules"] = {
+                "count": unscheduled, "message": "VMs have no active schedule",
+                "urgency": "advisory",
+            }
         if app.state.release_cache["payload"] and (
             _version_key(app.state.release_cache["payload"]["latest_version"])
             > _version_key(__version__)
         ):
-            notices["updates"] = {"count": 1, "message": "Application update available"}
+            notices["updates"] = {
+                "count": 1, "message": "Application update available", "urgency": "info",
+            }
         return notices
 
     def repository_unavailable():

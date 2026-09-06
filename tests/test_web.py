@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.9.0" in response.text
+    assert "v0.9.1" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -184,6 +184,7 @@ def test_dashboard_survives_disconnected_repository(tmp_path, monkeypatch):
 
     dashboard = client.get("/")
     repository = client.get("/api/v1/repository")
+    notifications = client.get("/api/v1/notifications").json()
 
     assert dashboard.status_code == 200
     assert "Backup storage disconnected" in dashboard.text
@@ -191,6 +192,7 @@ def test_dashboard_survives_disconnected_repository(tmp_path, monkeypatch):
     assert "Actions are disabled" in dashboard.text
     assert repository.status_code == 503
     assert "unavailable" in repository.json()["detail"]
+    assert notifications["settings"]["urgency"] == "critical"
 
 
 def test_datastores_page_persists_inventory_snapshot(tmp_path, monkeypatch):
@@ -357,11 +359,13 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
 
     assert 'href="/updates"' in dashboard.text
     assert "app-shell" in dashboard.text
+    assert "urgency-critical" in dashboard.text
+    assert "urgency-advisory" in dashboard.text
     assert response.status_code == 202
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.0"
+    assert status["version"] == "0.9.1"
     assert status["requested_at"] is not None
 
 
