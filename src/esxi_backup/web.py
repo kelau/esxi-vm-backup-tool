@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, Request
@@ -192,6 +193,114 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         if response := repository_unavailable():
             return response
         return app.state.scheduler.policies()
+
+    def home_assistant_payload(include_vms: bool = True):
+        """Build a stable, sensor-friendly view without leaking configuration secrets."""
+        generated_at = datetime.now(UTC)
+        connection_error = None
+        try:
+            live_vms = app.state.service.list_vms()
+        except Exception as exc:
+            live_vms, connection_error = [], str(exc)
+
+        repository_error = app.state.service.repository.availability_error()
+        backups = [] if repository_error else app.state.service.repository.list()
+        stats = None if repository_error else app.state.service.repository.stats()
+        latest_success = {}
+        latest_job = {}
+        for backup in backups:
+            latest_job.setdefault(backup.vm_id, backup)
+            if backup.status == "success":
+                latest_success.setdefault(backup.vm_id, backup)
+
+        policies_by_vm = {}
+        for policy in app.state.scheduler.policies() if not repository_error else []:
+            if policy.frequency == "disabled":
+                continue
+            for vm_id in policy.vm_ids:
+                policies_by_vm.setdefault(vm_id, []).append(policy.name)
+
+        vm_map = {vm.id: vm for vm in live_vms}
+        for vm_id, backup in latest_job.items():
+            if vm_id not in vm_map:
+                vm_map[vm_id] = VMInfo(
+                    id=vm_id, name=backup.vm_name, power_state="unavailable",
+                    connection_state="backup_only", guest_os="Repository recovery point",
+                    provisioned_bytes=backup.virtual_bytes,
+                )
+
+        vm_payload = []
+        for vm in sorted(vm_map.values(), key=lambda item: item.name.casefold()):
+            success = latest_success.get(vm.id)
+            job = latest_job.get(vm.id)
+            backup_time = (success.finished_at or success.started_at) if success else None
+            if vm.connection_state == "backup_only":
+                inventory_state = "backup_only"
+            elif vm.connection_state == "connected":
+                inventory_state = "live"
+            else:
+                inventory_state = "inaccessible"
+            vm_payload.append({
+                "id": vm.id,
+                "name": vm.name,
+                "inventory_state": inventory_state,
+                "power_state": vm.power_state,
+                "backup_state": (
+                    "running" if job and job.status == "running"
+                    else "protected" if success else "unprotected"
+                ),
+                "last_backup_at": backup_time,
+                "last_backup_age_seconds": (
+                    max(0, int((generated_at - backup_time).total_seconds()))
+                    if backup_time else None
+                ),
+                "backup_size_bytes": success.repository_bytes if success else 0,
+                "provisioned_bytes": vm.provisioned_bytes,
+                "scheduled": vm.id in policies_by_vm,
+                "schedules": policies_by_vm.get(vm.id, []),
+            })
+
+        errors = {
+            key: value for key, value in {
+                "esxi": connection_error, "repository": repository_error,
+            }.items() if value
+        }
+        payload = {
+            "status": "ok" if not errors else "degraded",
+            "version": __version__,
+            "generated_at": generated_at,
+            "esxi_connected": connection_error is None,
+            "repository_available": repository_error is None,
+            "vm_count": len(vm_payload),
+            "protected_vm_count": sum(vm["backup_state"] == "protected" for vm in vm_payload),
+            "scheduled_vm_count": sum(vm["scheduled"] for vm in vm_payload),
+            "active_backup_count": sum(item.status == "running" for item in backups),
+            "failed_backup_count": sum(item.status == "failed" for item in backups),
+            "repository": stats,
+            "errors": errors,
+        }
+        if include_vms:
+            payload["vms"] = vm_payload
+        return payload
+
+    @app.get("/api/v1/home-assistant")
+    def api_home_assistant(include_vms: bool = True):
+        return home_assistant_payload(include_vms)
+
+    @app.get("/api/v1/home-assistant/vms/{vm_id}")
+    def api_home_assistant_vm(vm_id: str):
+        payload = home_assistant_payload()
+        vm = next((item for item in payload["vms"] if item["id"] == vm_id), None)
+        if vm is None:
+            raise LookupError(f"VM not found: {vm_id}")
+        return vm
+
+    @app.post("/api/v1/home-assistant/vms/{vm_id}/backup", status_code=202)
+    def api_home_assistant_backup(vm_id: str, tasks: BackgroundTasks):
+        if response := repository_unavailable():
+            return response
+        tasks.add_task(app.state.service.backup, vm_id)
+        return {"accepted": True, "vm_id": vm_id}
 
     @app.get("/schedules", response_class=HTMLResponse)
     def schedules_page(request: Request):

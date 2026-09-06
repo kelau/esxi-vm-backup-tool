@@ -130,6 +130,44 @@ API endpoints:
 | `GET` | `/api/v1/config` | Effective non-secret configuration |
 | `GET` | `/api/v1/schedules` | Named schedule policies and next run times |
 | `POST` | `/api/v1/vms/{id}/backups` | Queue a backup |
+| `GET` | `/api/v1/home-assistant` | Home Assistant summary and per-VM health |
+| `GET` | `/api/v1/home-assistant/vms/{id}` | One VM's Home Assistant attributes |
+| `POST` | `/api/v1/home-assistant/vms/{id}/backup` | Queue a backup from Home Assistant |
+
+### Home Assistant
+
+The Home Assistant endpoint returns an `ok` or `degraded` state plus ESXi connectivity,
+repository availability and usage, protected/scheduled/running/failed counts, and optional VM
+attributes. Datetimes are UTC ISO 8601 values and sizes are bytes. Add this to Home Assistant's
+`configuration.yaml`, replacing the host address:
+
+```yaml
+rest:
+  - resource: http://192.0.2.10:8080/api/v1/home-assistant
+    scan_interval: 60
+    sensor:
+      - name: ESXi backup
+        value_template: "{{ value_json.status }}"
+        json_attributes:
+          - esxi_connected
+          - repository_available
+          - vm_count
+          - protected_vm_count
+          - scheduled_vm_count
+          - active_backup_count
+          - failed_backup_count
+          - repository
+          - errors
+
+rest_command:
+  back_up_esxi_vm:
+    url: "http://192.0.2.10:8080/api/v1/home-assistant/vms/{{ vm_id }}/backup"
+    method: POST
+```
+
+Call the action with `action: rest_command.back_up_esxi_vm` and data such as
+`vm_id: vm-123`. Add `?include_vms=false` to the summary URL when individual VM attributes are not
+needed, or query `/api/v1/home-assistant/vms/{id}` for one VM.
 
 Put the web service behind an authenticated TLS reverse proxy before exposing it beyond a trusted
 management network. Bind to `127.0.0.1` (the default) otherwise.

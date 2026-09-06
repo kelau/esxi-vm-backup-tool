@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from esxi_backup.models import (
@@ -103,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.7.5" in response.text
+    assert "v0.8.0" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -275,6 +277,54 @@ def test_config_api_excludes_both_passwords(tmp_path, monkeypatch):
 
     assert "password" not in server
     assert "ssh_password" not in server
+
+
+def test_home_assistant_api_reports_backup_health(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    finished_at = datetime.now(UTC) - timedelta(hours=2)
+    service.repository.create(BackupRecord(
+        id="backup-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.SUCCESS,
+        finished_at=finished_at, repository_bytes=1234, virtual_bytes=4096,
+    ))
+    service.repository.save_schedule_policy(SchedulePolicy(
+        id="nightly", name="Nightly", vm_ids=["vm-1"], frequency="daily",
+    ))
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    client = TestClient(create_app())
+    summary = client.get("/api/v1/home-assistant").json()
+    vm = client.get("/api/v1/home-assistant/vms/vm-1").json()
+
+    assert summary["status"] == "ok"
+    assert summary["esxi_connected"] is True
+    assert summary["repository_available"] is True
+    assert summary["protected_vm_count"] == 1
+    assert summary["scheduled_vm_count"] == 1
+    assert summary["repository"]["recovery_points"] == 1
+    assert vm["backup_state"] == "protected"
+    assert vm["backup_size_bytes"] == 1234
+    assert vm["last_backup_age_seconds"] >= 7200
+    assert vm["schedules"] == ["Nightly"]
+
+
+def test_home_assistant_api_can_omit_vm_attributes(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    response = TestClient(create_app()).get("/api/v1/home-assistant?include_vms=false")
+
+    assert response.status_code == 200
+    assert "vms" not in response.json()
 
 
 def test_settings_can_pin_current_esxi_ssh_key(tmp_path, monkeypatch):
