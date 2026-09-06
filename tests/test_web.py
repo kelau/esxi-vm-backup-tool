@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.9.2" in response.text
+    assert "v0.9.3" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -365,7 +365,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.2"
+    assert status["version"] == "0.9.3"
     assert status["requested_at"] is not None
 
 
@@ -407,6 +407,26 @@ def test_update_page_can_force_check_and_detect_new_release(tmp_path, monkeypatc
     assert first.json()["available"] is True
     assert forced.json()["latest_version"] == "9.0.0"
     assert len(calls) == 2
+
+
+def test_all_tabs_use_same_stable_page_width(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    client = TestClient(create_app())
+
+    pages = [client.get(path).text for path in (
+        "/", "/datastores", "/schedules", "/settings", "/updates",
+    )]
+
+    for page in pages:
+        assert "max-width:1164px" in page
+        assert "box-sizing:border-box" in page
+        assert "scrollbar-gutter:stable" in page
 
 
 def test_vm_can_be_excluded_filtered_and_included(tmp_path, monkeypatch):
