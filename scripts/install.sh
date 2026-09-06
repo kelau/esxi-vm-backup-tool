@@ -6,6 +6,7 @@ INSTALL_ROOT="${ESXI_BACKUP_INSTALL_ROOT:-/opt/esxi-vm-backup}"
 CONFIG_DIR="${ESXI_BACKUP_CONFIG_DIR:-/etc/esxi-vm-backup}"
 DATA_DIR="${ESXI_BACKUP_DATA_DIR:-/var/lib/esxi-vm-backup}"
 SERVICE_USER="${ESXI_BACKUP_USER:-esxi-backup}"
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 UPDATE_ONLY=false
 [ "${1:-}" = "--update" ] && UPDATE_ONLY=true
 
@@ -17,7 +18,15 @@ command -v systemctl >/dev/null 2>&1 || fail "systemd is required."
 python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' \
   || fail "Python 3.11 or newer is required."
 
-release_json="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+github_curl() {
+  if [ -n "$GITHUB_TOKEN" ]; then
+    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$@"
+  else
+    curl -fsSL "$@"
+  fi
+}
+
+release_json="$(github_curl -H 'Accept: application/vnd.github+json' \
   -H 'X-GitHub-Api-Version: 2022-11-28' \
   "https://api.github.com/repos/${REPOSITORY}/releases/latest")" \
   || fail "Could not read the latest GitHub release."
@@ -42,8 +51,11 @@ if [ ! -x "$target/bin/esxi-backup" ]; then
   rm -rf "$temporary"
   python3 -m venv "$temporary"
   "$temporary/bin/pip" install --disable-pip-version-check --upgrade pip
-  "$temporary/bin/pip" install --disable-pip-version-check \
-    "https://github.com/${REPOSITORY}/archive/refs/tags/${tag}.tar.gz"
+  source_archive="$temporary/source.tar.gz"
+  github_curl -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/${REPOSITORY}/tarball/${tag}" -o "$source_archive"
+  "$temporary/bin/pip" install --disable-pip-version-check "$source_archive"
+  rm -f "$source_archive"
   mv "$temporary" "$target"
 fi
 ln -sfn "$target" "$INSTALL_ROOT/current.new"
@@ -77,9 +89,14 @@ EOF
   chmod 0640 "$CONFIG_DIR/config.toml"
 fi
 
-curl -fsSL "https://raw.githubusercontent.com/${REPOSITORY}/${tag}/scripts/install.sh" \
+github_curl -H 'Accept: application/vnd.github.raw+json' \
+  "https://api.github.com/repos/${REPOSITORY}/contents/scripts/install.sh?ref=${tag}" \
   -o /usr/local/sbin/esxi-backup-install
 chmod 0755 /usr/local/sbin/esxi-backup-install
+if [ -n "$GITHUB_TOKEN" ]; then
+  umask 077
+  printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" >"$CONFIG_DIR/update.env"
+fi
 
 cat >/etc/systemd/system/esxi-vm-backup.service <<EOF
 [Unit]
@@ -108,6 +125,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+EnvironmentFile=-$CONFIG_DIR/update.env
 ExecStart=/usr/local/sbin/esxi-backup-install --update
 EOF
 
