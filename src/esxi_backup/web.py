@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -39,6 +40,38 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app.state.service = BackupService(load_config(config_path))
     app.state.config_path = resolve_config_path(config_path)
     app.state.scheduler = BackupScheduler(app.state.service)
+    app.state.storage_refresh = {
+        "status": "idle", "started_at": None, "finished_at": None, "error": None,
+    }
+    app.state.storage_refresh_lock = threading.Lock()
+
+    def run_storage_refresh():
+        with app.state.storage_refresh_lock:
+            app.state.storage_refresh.update(
+                status="running", started_at=datetime.now(UTC), finished_at=None, error=None
+            )
+        try:
+            app.state.service.refresh_storage_inventory()
+        except Exception as exc:
+            with app.state.storage_refresh_lock:
+                app.state.storage_refresh.update(
+                    status="failed", finished_at=datetime.now(UTC), error=str(exc)
+                )
+        else:
+            with app.state.storage_refresh_lock:
+                app.state.storage_refresh.update(
+                    status="success", finished_at=datetime.now(UTC), error=None
+                )
+
+    def queue_storage_refresh(tasks: BackgroundTasks) -> bool:
+        with app.state.storage_refresh_lock:
+            if app.state.storage_refresh["status"] in {"queued", "running"}:
+                return False
+            app.state.storage_refresh.update(
+                status="queued", started_at=datetime.now(UTC), finished_at=None, error=None
+            )
+        tasks.add_task(run_storage_refresh)
+        return True
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
@@ -150,30 +183,39 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         return app.state.service.repository.stats()
 
     @app.get("/api/v1/storage")
-    def api_storage(refresh: bool = False):
+    def api_storage():
         if response := repository_unavailable():
             return response
-        if refresh or app.state.service.repository.latest_storage_snapshot() is None:
-            return app.state.service.refresh_storage_inventory()
         return app.state.service.repository.latest_storage_snapshot()
 
+    @app.post("/api/v1/storage/refresh", status_code=202)
+    def api_storage_refresh(tasks: BackgroundTasks):
+        if response := repository_unavailable():
+            return response
+        queued = queue_storage_refresh(tasks)
+        return {"accepted": queued, **app.state.storage_refresh}
+
+    @app.get("/api/v1/storage/refresh-status")
+    def api_storage_refresh_status():
+        with app.state.storage_refresh_lock:
+            return dict(app.state.storage_refresh)
+
     @app.get("/datastores", response_class=HTMLResponse)
-    def datastores_page(request: Request, refresh: bool = False):
+    def datastores_page(
+        request: Request, tasks: BackgroundTasks, refresh: bool = False,
+    ):
         error = None
         try:
-            snapshot = (
-                app.state.service.refresh_storage_inventory()
-                if refresh or app.state.service.repository.latest_storage_snapshot() is None
-                else app.state.service.repository.latest_storage_snapshot()
-            )
+            snapshot = app.state.service.repository.latest_storage_snapshot()
+            history = app.state.service.repository.storage_snapshots()
+            if refresh:
+                queue_storage_refresh(tasks)
         except Exception as exc:
-            snapshot = app.state.service.repository.latest_storage_snapshot() \
-                if app.state.service.repository.is_available() else None
+            snapshot, history = None, []
             error = str(exc)
         return templates.TemplateResponse(request, "datastores.html", {
             "snapshot": snapshot, "error": error,
-            "history": app.state.service.repository.storage_snapshots()
-            if app.state.service.repository.is_available() else [],
+            "history": history, "refresh_state": dict(app.state.storage_refresh),
         })
 
     @app.get("/api/v1/ova-exports")

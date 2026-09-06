@@ -105,7 +105,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     response = TestClient(create_app()).get("/")
 
     assert response.status_code == 200
-    assert "v0.8.0" in response.text
+    assert "v0.8.1" in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -202,9 +202,20 @@ def test_datastores_page_persists_inventory_snapshot(tmp_path, monkeypatch):
     monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
     monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
 
-    response = TestClient(create_app()).get("/datastores?refresh=true")
+    client = TestClient(create_app())
+    initial = client.get("/datastores")
+    refresh = client.post("/api/v1/storage/refresh")
+    status = client.get("/api/v1/storage/refresh-status")
+    response = client.get("/datastores")
 
+    assert initial.status_code == 200
+    assert "No storage snapshot is available yet" in initial.text
+    assert refresh.status_code == 202
+    assert refresh.json()["accepted"] is True
+    assert status.json()["status"] == "success"
     assert response.status_code == 200
+    assert "Refreshing inventory in the background" in response.text
+    assert "storageRefreshPending" in response.text
     assert "datastore1" in response.text
     assert "Test SSD" in response.text
     assert "Vendor / model" in response.text
