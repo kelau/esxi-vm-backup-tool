@@ -20,6 +20,22 @@ def test_media_health_uses_wear_and_fault_counters():
     assert damaged["label"] == "Watch"
 
 
+def test_media_health_ignores_esxi_zero_placeholder_normalized_values():
+    health = media_health({
+        "Health Status": ["OK", "N/A", "N/A", "N/A"],
+        "Read Error Count": ["0", "51", "N/A", "0"],
+        "Write Error Count": ["0", "0", "N/A", "0"],
+        "Reallocated Sector Count": ["0", "140", "N/A", "0"],
+        "Sector Reallocation Event Count": ["0", "0", "N/A", "0"],
+        "Pending Sector Reallocation Count": ["0", "0", "N/A", "0"],
+        "Uncorrectable Sector Count": ["0", "0", "N/A", "0"],
+    })
+
+    assert health == {
+        "score": 100, "label": "Healthy", "notes": ["No media faults reported"]
+    }
+
+
 def test_inventory_tolerates_vm_without_config():
     client = EsxiClient(ServerConfig(host="host", username="user", password="secret"))
     client._vms = lambda: [SimpleNamespace(

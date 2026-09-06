@@ -83,7 +83,10 @@ def media_health(smart: dict[str, list[str]]) -> dict:
         normalized = number(values[0], 100)
         threshold = number(values[1], 0) if len(values) > 1 else 0
         raw = number(values[-1], 0)
-        if threshold and normalized <= threshold:
+        # Some ESXi storage drivers report an unavailable normalized value as
+        # zero while still supplying the vendor threshold (and a zero raw
+        # counter). Treat only a positive normalized value as comparable.
+        if normalized > 0 and threshold > 0 and normalized <= threshold:
             score = min(score, 20)
             notes.append(f"{name} reached its SMART threshold")
         if raw <= 0:
