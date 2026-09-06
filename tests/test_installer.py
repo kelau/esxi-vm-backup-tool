@@ -15,8 +15,10 @@ def test_linux_installer_has_atomic_release_and_auto_update_units():
     assert "ufw allow" in script
     assert "firewall-cmd --permanent" in script
     assert 'WEB_PORT="${ESXI_BACKUP_WEB_PORT:-8080}"' in script
-    assert 'install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"' in script
+    assert 'install -d -o root -g "$SERVICE_USER" -m 0770 "$CONFIG_DIR"' in script
     assert 'chown root:"$SERVICE_USER" "$CONFIG_DIR/config.toml"' in script
+    assert 'UPDATE_ENV="${ESXI_BACKUP_UPDATE_ENV:-/etc/esxi-vm-backup-update.env}"' in script
+    assert 'chmod 0600 "$UPDATE_ENV"' in script
     assert "python3 -m venv" in script
     assert 'python3 -m venv "$target"' in script
     assert 'mv "$temporary" "$target"' not in script
@@ -24,5 +26,5 @@ def test_linux_installer_has_atomic_release_and_auto_update_units():
     assert 'mv -Tf "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current"' in script
     assert "esxi-vm-backup-update.timer" in script
     assert "Persistent=true" in script
-    assert "EnvironmentFile=-$CONFIG_DIR/update.env" in script
+    assert "EnvironmentFile=-$UPDATE_ENV" in script
     assert "CHANGE-ME" in script

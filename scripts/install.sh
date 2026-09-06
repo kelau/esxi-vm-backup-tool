@@ -4,6 +4,7 @@ set -eu
 REPOSITORY="${ESXI_BACKUP_GITHUB_REPO:-kelau/esxi-vm-backup-tool}"
 INSTALL_ROOT="${ESXI_BACKUP_INSTALL_ROOT:-/opt/esxi-vm-backup}"
 CONFIG_DIR="${ESXI_BACKUP_CONFIG_DIR:-/etc/esxi-vm-backup}"
+UPDATE_ENV="${ESXI_BACKUP_UPDATE_ENV:-/etc/esxi-vm-backup-update.env}"
 DATA_DIR="${ESXI_BACKUP_DATA_DIR:-/var/lib/esxi-vm-backup}"
 SERVICE_USER="${ESXI_BACKUP_USER:-esxi-backup}"
 WEB_PORT="${ESXI_BACKUP_WEB_PORT:-8080}"
@@ -102,7 +103,9 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 \
   "$DATA_DIR" "$DATA_DIR/repository"
-install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
+# Atomic settings saves require directory write access. Update credentials are
+# deliberately stored outside this service-writable directory.
+install -d -o root -g "$SERVICE_USER" -m 0770 "$CONFIG_DIR"
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
   cat >"$CONFIG_DIR/config.toml" <<EOF
 repository = "$DATA_DIR/repository"
@@ -130,7 +133,14 @@ github_curl -H 'Accept: application/vnd.github.raw+json' \
 chmod 0755 /usr/local/sbin/esxi-backup-install
 if [ -n "$GITHUB_TOKEN" ]; then
   umask 077
-  printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" >"$CONFIG_DIR/update.env"
+  printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" >"$UPDATE_ENV"
+fi
+if [ -f "$CONFIG_DIR/update.env" ]; then
+  mv -f "$CONFIG_DIR/update.env" "$UPDATE_ENV"
+fi
+if [ -f "$UPDATE_ENV" ]; then
+  chown root:root "$UPDATE_ENV"
+  chmod 0600 "$UPDATE_ENV"
 fi
 
 cat >/etc/systemd/system/esxi-vm-backup.service <<EOF
@@ -160,7 +170,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-EnvironmentFile=-$CONFIG_DIR/update.env
+EnvironmentFile=-$UPDATE_ENV
 ExecStart=/usr/local/sbin/esxi-backup-install --update
 EOF
 
