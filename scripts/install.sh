@@ -102,7 +102,7 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 \
   "$DATA_DIR" "$DATA_DIR/repository"
-install -d -m 0750 "$CONFIG_DIR"
+install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
   cat >"$CONFIG_DIR/config.toml" <<EOF
 repository = "$DATA_DIR/repository"
@@ -120,9 +120,9 @@ port = 443
 verify_ssl = true
 ssh_enabled = false
 EOF
-  chown root:"$SERVICE_USER" "$CONFIG_DIR/config.toml"
-  chmod 0640 "$CONFIG_DIR/config.toml"
 fi
+chown root:"$SERVICE_USER" "$CONFIG_DIR/config.toml"
+chmod 0640 "$CONFIG_DIR/config.toml"
 
 github_curl -H 'Accept: application/vnd.github.raw+json' \
   "https://api.github.com/repos/${REPOSITORY}/contents/scripts/install.sh?ref=${tag}" \

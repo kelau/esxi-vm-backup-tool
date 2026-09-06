@@ -15,6 +15,8 @@ def test_linux_installer_has_atomic_release_and_auto_update_units():
     assert "ufw allow" in script
     assert "firewall-cmd --permanent" in script
     assert 'WEB_PORT="${ESXI_BACKUP_WEB_PORT:-8080}"' in script
+    assert 'install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"' in script
+    assert 'chown root:"$SERVICE_USER" "$CONFIG_DIR/config.toml"' in script
     assert "python3 -m venv" in script
     assert 'python3 -m venv "$target"' in script
     assert 'mv "$temporary" "$target"' not in script
