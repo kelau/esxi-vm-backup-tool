@@ -204,15 +204,27 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/update/status")
     def api_update_status():
         path = app.state.update_request_path
+        requested_at = (
+            datetime.fromtimestamp(path.stat().st_mtime, UTC) if path.exists() else None
+        )
+        log = (
+            app.state.update_log_path.read_text(encoding="utf-8", errors="replace")[-50000:]
+            if app.state.update_log_path.is_file() else ""
+        )
+        stalled = bool(
+            requested_at and not log
+            and (datetime.now(UTC) - requested_at).total_seconds() > 10
+        )
         return {
             "enabled": path.parent.is_dir() and os.access(path.parent, os.W_OK),
             "version": __version__,
-            "requested_at": (
-                datetime.fromtimestamp(path.stat().st_mtime, UTC) if path.exists() else None
-            ),
-            "log": (
-                app.state.update_log_path.read_text(encoding="utf-8", errors="replace")[-50000:]
-                if app.state.update_log_path.is_file() else ""
+            "requested_at": requested_at,
+            "log": log,
+            "stalled": stalled,
+            "error": (
+                "The installer produced no output. Its systemd unit may have failed before "
+                "starting; check esxi-vm-backup-update.service."
+                if stalled else None
             ),
         }
 

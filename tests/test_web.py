@@ -107,7 +107,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.9.9" in response.text
+    assert "v0.9.10" in response.text
     assert tasks.status_code == 200
     assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
@@ -374,8 +374,9 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.9"
+    assert status["version"] == "0.9.10"
     assert status["requested_at"] is not None
+    assert status["stalled"] is False
 
 
 def test_update_page_can_force_check_and_detect_new_release(tmp_path, monkeypatch):

@@ -159,6 +159,8 @@ User=$SERVICE_USER
 Group=$SERVICE_USER
 RuntimeDirectory=esxi-vm-backup
 RuntimeDirectoryMode=0750
+StateDirectory=esxi-vm-backup
+StateDirectoryMode=0750
 Environment=ESXI_BACKUP_UPDATE_REQUEST=/run/esxi-vm-backup/update-request
 Environment=ESXI_BACKUP_UPDATE_LOG=$DATA_DIR/update.log
 ExecStart=$INSTALL_ROOT/current/bin/esxi-backup web --config $CONFIG_DIR/config.toml --host 0.0.0.0 --port $WEB_PORT
