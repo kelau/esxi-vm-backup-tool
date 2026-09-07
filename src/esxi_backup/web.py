@@ -111,7 +111,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 "ova_capable": set(), "restores": {}, "vm_states": vm_states,
                 "latest_recovery": {}, "repository_vm_ids": set(),
                 "repository_stats": {"total_bytes": 0, "chunk_bytes": 0,
-                                     "ova_bytes": 0, "recovery_points": 0},
+                                     "ova_bytes": 0, "recovery_points": 0,
+                                     "free_bytes": 0, "capacity_bytes": 0},
                 "update_enabled": update_enabled,
             })
         backups = app.state.service.repository.list()
@@ -173,6 +174,31 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "repository_vm_ids": set(latest_job),
             "repository_error": None, "repository_available": True,
             "update_enabled": update_enabled,
+        })
+
+    @app.get("/tasks", response_class=HTMLResponse)
+    def tasks_page(request: Request):
+        repository_error = app.state.service.repository.availability_error()
+        if repository_error:
+            backups, ova_exports, ova_capable, restores = [], {}, set(), {}
+        else:
+            backups = app.state.service.repository.list()[:25]
+            ova_exports = {
+                item.backup_id: item
+                for item in app.state.service.repository.list_ova_exports()
+            }
+            ova_capable = {
+                backup.id for backup in backups
+                if app.state.service.supports_ova(backup.id)
+            }
+            restores = {
+                item.backup_id: item
+                for item in app.state.service.repository.list_restores()
+            }
+        return templates.TemplateResponse(request, "tasks.html", {
+            "backups": backups, "ova_exports": ova_exports,
+            "ova_capable": ova_capable, "restores": restores,
+            "repository_error": repository_error,
         })
 
     @app.get("/api/v1/update/status")
@@ -267,7 +293,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         notices = {}
         failed = sum(item.status == "failed" for item in backups)
         if failed:
-            notices["dashboard"] = {
+            notices["tasks"] = {
                 "count": failed, "message": "Recent failed backup jobs",
                 "urgency": "critical",
             }

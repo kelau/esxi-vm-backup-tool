@@ -120,6 +120,8 @@ def test_repository_stats_include_unique_chunks_and_recovery_points(tmp_path):
     stats = repository.stats()
     assert stats["total_bytes"] >= stats["chunk_bytes"] > 0
     assert stats["recovery_points"] == 1
+    assert stats["free_bytes"] > 0
+    assert stats["capacity_bytes"] >= stats["free_bytes"]
 
 
 def test_existing_manifest_repository_size_is_backfilled(tmp_path):

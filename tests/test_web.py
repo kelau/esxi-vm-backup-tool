@@ -102,10 +102,14 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
     monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
 
-    response = TestClient(create_app()).get("/")
+    client = TestClient(create_app())
+    response = client.get("/")
+    tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.9.7" in response.text
+    assert "v0.9.8" in response.text
+    assert tasks.status_code == 200
+    assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
     assert "demo" in response.text
     assert "esxi.test" in response.text
@@ -117,9 +121,13 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     assert "if (row && !interactive) showVmDetails" in response.text
     assert "error-brief" in response.text
     assert "Total repository" in response.text
+    assert "Repository free" in response.text
     assert "menu.removeAttribute('open')" in response.text
-    assert "Hide failed" in response.text
-    assert "hideFailedJobs" in response.text
+    assert "Hide failed" not in response.text
+    assert "Recent jobs" not in response.text
+    assert "Hide failed" in tasks.text
+    assert "hideFailedJobs" in tasks.text
+    assert "deleted-demo" in tasks.text
     assert "bar.indeterminate" in response.text
     assert "2 GiB" in response.text
     assert "Live on ESXi" in response.text
@@ -365,7 +373,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.7"
+    assert status["version"] == "0.9.8"
     assert status["requested_at"] is not None
 
 
@@ -420,7 +428,7 @@ def test_all_tabs_use_same_stable_page_width(tmp_path, monkeypatch):
     client = TestClient(create_app())
 
     pages = [client.get(path).text for path in (
-        "/", "/datastores", "/schedules", "/settings", "/updates",
+        "/", "/tasks", "/datastores", "/schedules", "/settings", "/updates",
     )]
 
     for page in pages:

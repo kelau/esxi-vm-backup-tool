@@ -683,6 +683,7 @@ class BackupRepository:
 
     @synchronized_db
     def stats(self) -> dict:
+        disk = shutil.disk_usage(self.root)
         chunk_bytes = self.db.execute(
             "SELECT COALESCE(SUM(stored_size),0) FROM chunk_index"
         ).fetchone()[0]
@@ -698,6 +699,8 @@ class BackupRepository:
         catalog_bytes = page_count * page_size
         return {
             "total_bytes": chunk_bytes + manifest_bytes + ova_bytes + catalog_bytes,
+            "free_bytes": disk.free,
+            "capacity_bytes": disk.total,
             "chunk_bytes": chunk_bytes,
             "manifest_bytes": manifest_bytes,
             "ova_bytes": ova_bytes,
