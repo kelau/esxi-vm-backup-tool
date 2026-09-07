@@ -57,6 +57,19 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         "status": "idle", "started_at": None, "finished_at": None, "error": None,
     }
     app.state.storage_refresh_lock = threading.Lock()
+    templates.env.globals["show_all_navigation_tabs"] = (
+        lambda: app.state.service.config.show_all_navigation_tabs
+    )
+
+    def unacknowledged_failures(backups: list) -> list:
+        acknowledged_at = app.state.service.config.failed_jobs_acknowledged_at
+        return [
+            item for item in backups
+            if item.status == "failed" and (
+                acknowledged_at is None
+                or (item.finished_at or item.started_at) > acknowledged_at
+            )
+        ]
 
     def run_storage_refresh():
         with app.state.storage_refresh_lock:
@@ -199,7 +212,17 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "backups": backups, "ova_exports": ova_exports,
             "ova_capable": ova_capable, "restores": restores,
             "repository_error": repository_error,
+            "unacknowledged_failure_count": len(unacknowledged_failures(backups)),
         })
+
+    @app.post("/tasks/acknowledge-errors")
+    def acknowledge_task_errors():
+        updated = app.state.service.config.model_copy(update={
+            "failed_jobs_acknowledged_at": datetime.now(UTC)
+        })
+        save_config(updated, app.state.config_path)
+        app.state.service.config = updated
+        return RedirectResponse("/tasks", status_code=303)
 
     @app.get("/api/v1/update/status")
     def api_update_status():
@@ -303,7 +326,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             for vm in datastore.get("vms", [])
         }
         notices = {}
-        failed = sum(item.status == "failed" for item in backups)
+        failed = len(unacknowledged_failures(backups))
         if failed:
             notices["tasks"] = {
                 "count": failed, "message": "Recent failed backup jobs",
@@ -605,6 +628,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         parallel_disks: int = Form(),
         max_concurrent_backups: int = Form(),
         quiesce: bool = Form(default=False),
+        show_all_navigation_tabs: bool = Form(default=False),
         keep_last: int = Form(),
         keep_daily: int = Form(),
         keep_weekly: int = Form(),
@@ -633,6 +657,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 compression_level=compression_level, pipeline_workers=pipeline_workers,
                 parallel_disks=parallel_disks,
                 max_concurrent_backups=max_concurrent_backups, quiesce=quiesce,
+                show_all_navigation_tabs=show_all_navigation_tabs,
+                failed_jobs_acknowledged_at=current.failed_jobs_acknowledged_at,
                 excluded_vm_ids=current.excluded_vm_ids,
                 retention=RetentionConfig(
                     keep_last=keep_last, keep_daily=keep_daily,

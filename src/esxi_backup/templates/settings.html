@@ -46,6 +46,9 @@
       <label>Parallel disks<input name="parallel_disks" type="number" min="1" max="4" value="{{ config.parallel_disks }}" required><small>Concurrent ESXi disk exports per VM.</small></label>
       <label>Concurrent VM backups<input name="max_concurrent_backups" type="number" min="1" max="8" value="{{ config.max_concurrent_backups }}" required><small>Host-wide limit. Keep this at 1 on low-memory backup servers.</small></label>
     </div><label class="check"><input name="quiesce" type="checkbox" value="true" {% if config.quiesce %}checked{% endif %}> Request quiesced snapshots</label>
+    <h2>Interface</h2>
+    <label class="check"><input name="show_all_navigation_tabs" type="checkbox" value="true" {% if config.show_all_navigation_tabs %}checked{% endif %}> Show every page as a tab</label>
+    <small>When disabled, administration pages remain in the tools menu.</small>
     <h2>Retention targets</h2><div class="grid">
       <label>Keep last<input name="keep_last" type="number" min="1" value="{{ config.retention.keep_last }}" required></label>
       <label>Daily<input name="keep_daily" type="number" min="0" value="{{ config.retention.keep_daily }}" required></label>

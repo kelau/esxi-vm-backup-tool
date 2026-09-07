@@ -118,6 +118,7 @@ pipeline_workers = 2
 parallel_disks = 2
 max_concurrent_backups = 1
 quiesce = true
+show_all_navigation_tabs = false
 
 [server]
 host = "esxi.example.invalid"

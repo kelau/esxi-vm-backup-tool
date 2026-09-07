@@ -107,7 +107,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.9.10" in response.text
+    assert "v0.10.0" in response.text
     assert tasks.status_code == 200
     assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
@@ -374,7 +374,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.10"
+    assert status["version"] == "0.10.0"
     assert status["requested_at"] is not None
     assert status["stalled"] is False
 
@@ -414,9 +414,53 @@ def test_update_page_can_force_check_and_detect_new_release(tmp_path, monkeypatc
     assert page.status_code == 200
     assert "Check now" in page.text
     assert "setInterval(checkUpdates,900000)" in page.text
+    assert 'id="update-output" hidden' in page.text
+    assert "output.hidden=false" in page.text
     assert first.json()["available"] is True
     assert forced.json()["latest_version"] == "9.0.0"
     assert len(calls) == 2
+
+
+def test_task_failure_notification_can_be_acknowledged(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path / "repository"),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    service.repository.create(BackupRecord(
+        id="failed-1", vm_id="vm-1", vm_name="demo", status=BackupStatus.FAILED,
+        finished_at=datetime.now(UTC), error="test failure",
+    ))
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    client = TestClient(create_app(config_path))
+
+    assert client.get("/api/v1/notifications").json()["tasks"]["count"] == 1
+    page = client.get("/tasks")
+    assert "Clear error notification" in page.text
+
+    response = client.post("/tasks/acknowledge-errors", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "tasks" not in client.get("/api/v1/notifications").json()
+    assert "Clear error notification" not in client.get("/tasks").text
+
+
+def test_all_pages_can_be_shown_as_navigation_tabs(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path), show_all_navigation_tabs=True,
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+
+    page = TestClient(create_app()).get("/").text
+
+    assert '<div class="app-tabs">' in page
+    assert 'data-tab="datastores"' in page
+    assert '<details class="tools-menu' not in page
 
 
 def test_all_tabs_use_same_stable_page_width(tmp_path, monkeypatch):
