@@ -107,6 +107,20 @@ secret manager before executing the command; do not place the password in the cr
 
 ## Web UI and API
 
+### Portainer and Docker containers
+
+Configure a Portainer URL and API key in Settings to discover Docker environments and containers.
+The Containers page can create recovery points containing the complete Docker container inspection
+metadata and deduplicated tar streams for every named volume mounted in that container. Running
+containers are paused while their storage is archived by default. Bind mounts are excluded unless
+explicitly enabled because they can expose arbitrary host paths. Image digests are recorded in the
+metadata; images should remain available from their registry.
+
+The Portainer account must be able to list environments and use the Docker API proxy for container
+inspection, pause/unpause, and archive operations. Container environment variables can contain
+secrets, so protect the repository accordingly. Automated container restoration and schedules are
+planned on top of this recovery-point format.
+
 Run `esxi-backup web`, then open `http://localhost:8080`. The dashboard shows VMs, power state,
 latest recovery point, storage consumed, failures, OVA build progress, and a **Back up now** action.
 The Schedules page manages named daily or weekly policies. A policy can contain multiple VMs, a VM

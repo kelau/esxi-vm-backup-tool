@@ -37,6 +37,14 @@
       <p><button type="submit" formaction="/settings/trust-ssh-host" formmethod="post" onclick="return confirm('Trust the SSH key currently presented by this ESXi host? Verify its fingerprint in ESXi first when possible.')">Trust current ESXi SSH key</button>
       <small>{% if config.server.ssh_host_key %}A host key is pinned. Use this only when intentionally replacing it.{% else %}No SSH host key is trusted yet.{% endif %}</small></p>
     {% endif %}
+    <h2>Portainer</h2><div class="grid">
+      <label>Portainer URL<input name="portainer_url" value="{{ config.portainer.url if config.portainer else '' }}" placeholder="https://portainer.example:9443"></label>
+      <label>API key<input name="portainer_api_key" type="password" placeholder="{% if config.portainer %}Leave blank to keep current{% else %}Portainer access token{% endif %}" autocomplete="new-password"></label>
+    </div>
+    <label class="check"><input name="portainer_verify_ssl" type="checkbox" value="true" {% if not config.portainer or config.portainer.verify_ssl %}checked{% endif %}> Verify Portainer TLS certificate</label>
+    <label class="check"><input name="portainer_pause_during_backup" type="checkbox" value="true" {% if not config.portainer or config.portainer.pause_during_backup %}checked{% endif %}> Pause running containers while archiving volumes</label>
+    <label class="check"><input name="portainer_include_bind_mounts" type="checkbox" value="true" {% if config.portainer and config.portainer.include_bind_mounts %}checked{% endif %}> Include bind mounts</label>
+    <small>Named volumes are included automatically. Bind mounts may expose arbitrary host data and are opt-in.</small>
     <h2>Backup storage</h2><div class="grid">
       <label>Repository path<input name="repository" value="{{ config.repository }}" required></label>
       <label>Secondary repository<input name="secondary_repository" value="{{ config.secondary_repository or '' }}" placeholder="Optional mirrored location"><small>Receives a complete passive copy and can take over if the primary disappears.</small></label>

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from esxi_backup.config import load_config, save_config
+from esxi_backup.models import AppConfig, PortainerConfig, ServerConfig
 
 
 def test_environment_password_overrides_file(tmp_path, monkeypatch):
@@ -19,3 +20,15 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     save_config(config, source)
     restored = load_config(source)
     assert restored == config
+
+
+def test_save_config_serializes_portainer_api_key(tmp_path):
+    path = tmp_path / "config.toml"
+    config = AppConfig(
+        server=ServerConfig(host="host", username="user", password="secret"),
+        portainer=PortainerConfig(url="https://portainer.test", api_key="token"),
+    )
+
+    save_config(config, path)
+
+    assert load_config(path).portainer.api_key.get_secret_value() == "token"

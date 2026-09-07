@@ -41,6 +41,8 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     data["server"]["password"] = config.server.password.get_secret_value()
     if config.server.ssh_password:
         data["server"]["ssh_password"] = config.server.ssh_password.get_secret_value()
+    if config.portainer:
+        data["portainer"]["api_key"] = config.portainer.api_key.get_secret_value()
     with tempfile.NamedTemporaryFile(
         mode="wb", dir=target.parent, prefix=f".{target.name}.", delete=False
     ) as handle:

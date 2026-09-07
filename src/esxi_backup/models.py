@@ -35,8 +35,17 @@ class RetentionConfig(BaseModel):
     keep_monthly: Annotated[int, Field(ge=0)] = 12
 
 
+class PortainerConfig(BaseModel):
+    url: str
+    api_key: SecretStr
+    verify_ssl: bool = True
+    pause_during_backup: bool = True
+    include_bind_mounts: bool = False
+
+
 class AppConfig(BaseModel):
     server: ServerConfig
+    portainer: PortainerConfig | None = None
     repository: str = "./backups"
     secondary_repository: str | None = None
     chunk_size_mib: Annotated[int, Field(ge=1, le=256)] = 8

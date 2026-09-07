@@ -18,6 +18,7 @@ from .config import load_config, resolve_config_path, save_config
 from .models import (
     AppConfig,
     BackupSchedule,
+    PortainerConfig,
     RetentionConfig,
     SchedulePolicy,
     ServerConfig,
@@ -214,6 +215,31 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             "repository_error": repository_error,
             "unacknowledged_failure_count": len(unacknowledged_failures(backups)),
         })
+
+    @app.get("/containers", response_class=HTMLResponse)
+    def containers_page(request: Request):
+        try:
+            containers = app.state.service.list_containers()
+            error = None
+        except Exception as exc:
+            containers, error = [], str(exc)
+        latest = {}
+        for item in app.state.service.repository.list():
+            if item.vm_id.startswith("container:"):
+                latest.setdefault(item.vm_id, item)
+        return templates.TemplateResponse(request, "containers.html", {
+            "containers": containers, "error": error,
+            "configured": app.state.service.config.portainer is not None,
+            "latest": latest,
+        })
+
+    @app.post("/containers/{endpoint_id}/{container_id}/backups")
+    def backup_container(endpoint_id: int, container_id: str, tasks: BackgroundTasks):
+        identity = f"container:{endpoint_id}:{container_id}"
+        if error := app.state.service.backup_capacity_error(identity):
+            return JSONResponse(status_code=409, content={"detail": error})
+        tasks.add_task(app.state.service.backup_container, endpoint_id, container_id)
+        return RedirectResponse("/containers", status_code=303)
 
     @app.post("/tasks/acknowledge-errors")
     def acknowledge_task_errors():
@@ -595,7 +621,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/config")
     def api_config():
         config = app.state.service.config.model_dump(
-            mode="json", exclude={"server": {"password", "ssh_password"}}
+            mode="json", exclude={
+                "server": {"password", "ssh_password"}, "portainer": {"api_key"}
+            }
         )
         return config
 
@@ -620,6 +648,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         ssh_username: str = Form(default=""),
         ssh_password: str = Form(default=""),
         ssh_verify_host_key: bool = Form(default=False),
+        portainer_url: str = Form(default=""),
+        portainer_api_key: str = Form(default=""),
+        portainer_verify_ssl: bool = Form(default=False),
+        portainer_pause_during_backup: bool = Form(default=False),
+        portainer_include_bind_mounts: bool = Form(default=False),
         repository: str = Form(),
         secondary_repository: str = Form(default=""),
         chunk_size_mib: int = Form(),
@@ -650,6 +683,19 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                     ),
                     ssh_verify_host_key=ssh_verify_host_key,
                     ssh_host_key=current.server.ssh_host_key,
+                ),
+                portainer=(
+                    PortainerConfig(
+                        url=portainer_url.strip(),
+                        api_key=(
+                            portainer_api_key
+                            or (current.portainer.api_key.get_secret_value()
+                                if current.portainer else "")
+                        ),
+                        verify_ssl=portainer_verify_ssl,
+                        pause_during_backup=portainer_pause_during_backup,
+                        include_bind_mounts=portainer_include_bind_mounts,
+                    ) if portainer_url.strip() else None
                 ),
                 repository=repository.strip(),
                 secondary_repository=secondary_repository.strip() or None,

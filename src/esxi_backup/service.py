@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from .esxi import EsxiClient
 from .models import AppConfig, BackupRecord, BackupStatus, VMInfo
+from .portainer import PortainerClient
 from .repository import BackupRepository
 
 
@@ -30,6 +31,93 @@ class BackupService:
         self._cancel_events: dict[str, threading.Event] = {}
         self._active_vm_ids: set[str] = set()
         self._cancel_lock = threading.Lock()
+
+    def list_containers(self) -> list[dict]:
+        if not self.config.portainer:
+            return []
+        output = []
+        with PortainerClient(self.config.portainer) as client:
+            for endpoint in client.endpoints():
+                for container in client.containers(endpoint["id"]):
+                    output.append({**container, "endpoint_id": endpoint["id"],
+                                   "endpoint_name": endpoint["name"]})
+        return output
+
+    def backup_container(self, endpoint_id: int, container_id: str) -> BackupRecord:
+        if not self.config.portainer:
+            raise RuntimeError("Portainer is not configured.")
+        identity = f"container:{endpoint_id}:{container_id}"
+        backup_id = uuid.uuid4().hex
+        with PortainerClient(self.config.portainer) as client:
+            details = client.inspect_container(endpoint_id, container_id)
+            name = str(details.get("Name") or container_id[:12]).lstrip("/")
+            cancel_event = self._begin_backup(backup_id, identity, name)
+            record = BackupRecord(
+                id=backup_id, vm_id=identity, vm_name=name, status=BackupStatus.RUNNING,
+                phase="inspecting container",
+            )
+            self.repository.create(record)
+            paused = False
+            logical = stored = 0
+            files = []
+            try:
+                running = bool(details.get("State", {}).get("Running"))
+                if running and self.config.portainer.pause_during_backup:
+                    self.repository.update_progress(
+                        backup_id, progress=5, phase="pausing container"
+                    )
+                    client.pause(endpoint_id, container_id)
+                    paused = True
+                mounts = [
+                    mount for mount in details.get("Mounts", [])
+                    if mount.get("Type") == "volume" or (
+                        mount.get("Type") == "bind"
+                        and self.config.portainer.include_bind_mounts
+                    )
+                ]
+                for index, mount in enumerate(mounts, start=1):
+                    if cancel_event.is_set():
+                        raise BackupCancelled("Backup cancelled by user")
+                    label = mount.get("Name") or mount.get("Source") or f"mount-{index}"
+                    self.repository.update_progress(
+                        backup_id,
+                        progress=10 + int(80 * (index - 1) / max(1, len(mounts))),
+                        phase="archiving container storage", current_file=str(label),
+                    )
+                    with client.archive(endpoint_id, container_id, mount["Destination"]) as stream:
+                        chunks, file_logical, file_stored = self.repository.store_stream(
+                            stream, workers=self.config.pipeline_workers
+                        )
+                    logical += file_logical
+                    stored += file_stored
+                    files.append({
+                        "name": f"{label}.tar", "size": file_logical, "chunks": chunks,
+                        "mount": mount,
+                    })
+                self.repository.write_manifest(backup_id, {
+                    "format": 1, "kind": "docker-container", "backup_id": backup_id,
+                    "vm_id": identity, "vm_name": name, "endpoint_id": endpoint_id,
+                    "container": details, "files": files,
+                })
+                referenced = {
+                    chunk["sha256"]: int(chunk["stored_size"])
+                    for file in files for chunk in file["chunks"]
+                }
+                self.repository.finish(
+                    backup_id, logical=logical, stored=stored,
+                    repository_bytes=sum(referenced.values()), virtual=logical,
+                )
+            except BackupCancelled:
+                self.repository.cancel(backup_id)
+            except Exception as exc:
+                self.repository.fail(backup_id, str(exc))
+                raise
+            finally:
+                if paused:
+                    client.unpause(endpoint_id, container_id)
+                self._end_backup(backup_id, identity)
+        self.repository.sync_mirror_background()
+        return self.repository.list(identity)[0]
 
     def _begin_backup(self, backup_id: str, vm_id: str, vm_name: str) -> threading.Event:
         with self._cancel_lock:

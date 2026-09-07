@@ -1,3 +1,4 @@
+import json
 import tarfile
 from contextlib import contextmanager
 from io import BytesIO
@@ -7,7 +8,7 @@ import pytest
 
 pytest.importorskip("zstandard")
 
-from esxi_backup.models import AppConfig, ServerConfig, VMInfo
+from esxi_backup.models import AppConfig, PortainerConfig, ServerConfig, VMInfo
 from esxi_backup.service import BackupService
 
 
@@ -254,3 +255,55 @@ def test_chunk_stream_reports_bytes_as_they_are_read(tmp_path):
         assert stream.read() == b"virtual-disk"
 
     assert sum(reads) == len(b"virtual-disk")
+
+
+def test_container_backup_captures_metadata_and_named_volumes(tmp_path, monkeypatch):
+    events = []
+
+    class FakePortainer:
+        def __init__(self, _config):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def inspect_container(self, _endpoint, _container):
+            return {
+                "Name": "/database", "Image": "postgres@sha256:test",
+                "State": {"Running": True},
+                "Mounts": [
+                    {"Type": "volume", "Name": "db-data", "Destination": "/data"},
+                    {"Type": "bind", "Source": "/host/secrets", "Destination": "/secrets"},
+                ],
+            }
+
+        def pause(self, *_):
+            events.append("pause")
+
+        def unpause(self, *_):
+            events.append("unpause")
+
+        @contextmanager
+        def archive(self, _endpoint, _container, path):
+            events.append(path)
+            yield BytesIO(b"volume archive")
+
+    app_config = config(tmp_path)
+    app_config.portainer = PortainerConfig(
+        url="https://portainer.test", api_key="token", include_bind_mounts=False
+    )
+    service = BackupService(app_config, client_factory=FakeClient)
+    monkeypatch.setattr("esxi_backup.service.PortainerClient", FakePortainer)
+
+    backup = service.backup_container(1, "container-id")
+    manifest = json.loads(
+        (service.repository.manifests / f"{backup.id}.json").read_text(encoding="utf-8")
+    )
+
+    assert backup.status == "success"
+    assert events == ["pause", "/data", "unpause"]
+    assert manifest["kind"] == "docker-container"
+    assert [item["name"] for item in manifest["files"]] == ["db-data.tar"]
