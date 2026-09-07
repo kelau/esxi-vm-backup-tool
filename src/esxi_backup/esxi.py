@@ -485,6 +485,31 @@ class EsxiClient:
             raise ValueError(f"Unsupported VMDK backing path: {backing}")
         return match.group(1), match.group(2)
 
+    @staticmethod
+    def _select_clone_datastore(snapshot, source: str, required_bytes: int) -> str:
+        """Choose an accessible host datastore that can safely hold the hot clone."""
+        vm = getattr(snapshot, "vm", None)
+        host = getattr(getattr(vm, "runtime", None), "host", None)
+        candidates = []
+        for datastore in list(getattr(host, "datastore", None) or []):
+            summary = getattr(datastore, "summary", None)
+            if summary is None or not bool(getattr(summary, "accessible", False)):
+                continue
+            candidates.append((
+                str(getattr(summary, "name", getattr(datastore, "name", ""))),
+                int(getattr(summary, "freeSpace", 0) or 0),
+            ))
+        suitable = [item for item in candidates if item[1] >= required_bytes]
+        if not suitable:
+            largest = max((free for _name, free in candidates), default=0)
+            raise RuntimeError(
+                "No accessible ESXi datastore has enough free space for the temporary "
+                f"hot clone (requires {required_bytes / 1073741824:.0f} GiB including "
+                f"safety margin; largest available is {largest / 1073741824:.0f} GiB)."
+            )
+        source_match = next((item for item in suitable if item[0] == source), None)
+        return source_match[0] if source_match else max(suitable, key=lambda item: item[1])[0]
+
     def _run_ssh(self, command: str, on_poll=None) -> None:
         _stdin, stdout, stderr = self.ssh.exec_command(command, timeout=3600)
         error_output = bytearray()
@@ -518,10 +543,15 @@ class EsxiClient:
             if not disks:
                 raise RuntimeError("The snapshot contains no exportable virtual disks.")
             total_capacity = sum(int(getattr(disk, "capacityInBytes", 0)) for disk in disks)
+            safety_margin = max(1024**3, total_capacity // 20)
+            source_datastore, _relative = self._datastore_path(disks[0].backing.fileName)
+            clone_datastore = self._select_clone_datastore(
+                snapshot, source_datastore, total_capacity + safety_margin
+            )
             completed_capacity = 0
             for index, disk in enumerate(disks, start=1):
                 datastore, relative = self._datastore_path(disk.backing.fileName)
-                directory = f"/vmfs/volumes/{datastore}/.esxi-backup-{backup_id}"
+                directory = f"/vmfs/volumes/{clone_datastore}/.esxi-backup-{backup_id}"
                 if directory not in directories:
                     sftp.mkdir(directory)
                     directories.add(directory)
@@ -543,7 +573,7 @@ class EsxiClient:
                     on_prepare(
                         min(total_capacity, completed_capacity + current),
                         total_capacity,
-                        f"Disk {index} of {len(disks)}",
+                        f"Disk {index} of {len(disks)} · clone on {clone_datastore}",
                     )
 
                 self._run_ssh(

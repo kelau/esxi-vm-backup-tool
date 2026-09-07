@@ -121,3 +121,37 @@ def test_esxi_datastore_path_is_converted_safely():
     assert EsxiClient._datastore_path("[DS3] Cookie Clicker/disk-000001.vmdk") == (
         "DS3", "Cookie Clicker/disk-000001.vmdk"
     )
+
+
+def test_hot_clone_uses_source_when_safe_and_falls_back_to_roomiest_datastore():
+    def datastore(name, free, accessible=True):
+        return SimpleNamespace(
+            name=name,
+            summary=SimpleNamespace(name=name, freeSpace=free, accessible=accessible),
+        )
+
+    source = datastore("DS3", 20)
+    roomy = datastore("DS4", 100)
+    offline = datastore("DS5", 1000, accessible=False)
+    snapshot = SimpleNamespace(vm=SimpleNamespace(
+        runtime=SimpleNamespace(host=SimpleNamespace(datastore=[source, roomy, offline]))
+    ))
+
+    assert EsxiClient._select_clone_datastore(snapshot, "DS3", 10) == "DS3"
+    assert EsxiClient._select_clone_datastore(snapshot, "DS3", 50) == "DS4"
+
+
+def test_hot_clone_reports_when_no_datastore_has_enough_space():
+    datastore = SimpleNamespace(
+        name="DS3", summary=SimpleNamespace(name="DS3", freeSpace=20, accessible=True)
+    )
+    snapshot = SimpleNamespace(vm=SimpleNamespace(
+        runtime=SimpleNamespace(host=SimpleNamespace(datastore=[datastore]))
+    ))
+
+    try:
+        EsxiClient._select_clone_datastore(snapshot, "DS3", 50)
+    except RuntimeError as error:
+        assert "No accessible ESXi datastore" in str(error)
+    else:
+        raise AssertionError("Expected insufficient datastore space to be rejected")

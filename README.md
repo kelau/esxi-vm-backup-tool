@@ -77,6 +77,10 @@ Standalone ESXi may expose `ExportSnapshot` but reject it at runtime. For hot ba
 case, enable the ESXi SSH service and configure `ssh_enabled`, `ssh_username`, and
 `ssh_password` (or `ESXI_BACKUP_SSH_PASSWORD`). The SSH account must be allowed to run
 `vmkfstools`. Keep host-key verification enabled and add the host key to `known_hosts`.
+Temporary hot clones stay on the source datastore when it has sufficient capacity. Otherwise,
+the app selects the accessible datastore with the most free space. Selection reserves the disks'
+full virtual capacity plus a 5% safety margin (at least 1 GiB), and live task progress names the
+chosen clone datastore.
 
 ## CLI and automation
 
