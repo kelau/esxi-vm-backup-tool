@@ -107,7 +107,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.9.8" in response.text
+    assert "v0.9.9" in response.text
     assert tasks.status_code == 200
     assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
@@ -274,6 +274,7 @@ def test_settings_update_keeps_masked_password(tmp_path, monkeypatch):
         "verify_ssl": "true", "repository": str(tmp_path / "new-repo"),
         "chunk_size_mib": "16", "compression_level": "8", "quiesce": "true",
         "pipeline_workers": "3", "parallel_disks": "2",
+        "max_concurrent_backups": "1",
         "keep_last": "5", "keep_daily": "10", "keep_weekly": "4", "keep_monthly": "6",
     }, follow_redirects=False)
     assert response.status_code == 303
@@ -373,7 +374,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.9.8"
+    assert status["version"] == "0.9.9"
     assert status["requested_at"] is not None
 
 

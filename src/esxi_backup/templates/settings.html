@@ -44,6 +44,7 @@
       <label>Compression level<input name="compression_level" type="number" min="1" max="19" value="{{ config.compression_level }}" required></label>
       <label>Pipeline workers<input name="pipeline_workers" type="number" min="1" max="8" value="{{ config.pipeline_workers }}" required><small>Parallel hash and compression workers per transfer.</small></label>
       <label>Parallel disks<input name="parallel_disks" type="number" min="1" max="4" value="{{ config.parallel_disks }}" required><small>Concurrent ESXi disk exports per VM.</small></label>
+      <label>Concurrent VM backups<input name="max_concurrent_backups" type="number" min="1" max="8" value="{{ config.max_concurrent_backups }}" required><small>Host-wide limit. Keep this at 1 on low-memory backup servers.</small></label>
     </div><label class="check"><input name="quiesce" type="checkbox" value="true" {% if config.quiesce %}checked{% endif %}> Request quiesced snapshots</label>
     <h2>Retention targets</h2><div class="grid">
       <label>Keep last<input name="keep_last" type="number" min="1" value="{{ config.retention.keep_last }}" required></label>

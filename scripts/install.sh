@@ -116,6 +116,7 @@ chunk_size_mib = 32
 compression_level = 3
 pipeline_workers = 2
 parallel_disks = 2
+max_concurrent_backups = 1
 quiesce = true
 
 [server]

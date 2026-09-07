@@ -14,6 +14,7 @@ It includes an automation-friendly CLI, JSON API, and web dashboard.
 - Zstandard compression is applied to each new chunk.
 - A bounded pipeline overlaps network reads, hashing, compression, and repository writes.
 - Multiple virtual disks can be exported concurrently with a configurable safety limit.
+- VM backups are admitted through a host-wide concurrency limit that defaults to one.
 - Identical blocks in successive full exports are referenced, not copied.
 - Manifests are tiny JSON documents, so each recovery point is independent even though its data
   is deduplicated.
@@ -23,7 +24,8 @@ first release, but repository growth is. A future CBT transport can reduce trans
 
 For faster backups, tune `chunk_size_mib`, `pipeline_workers` (1–8), and `parallel_disks` (1–4)
 on the Settings page. A practical starting point is 32 MiB, 2 pipeline workers, and 2 parallel
-disks. Increase these cautiously while watching ESXi load, CPU, memory, and repository I/O. The
+disks. Keep `max_concurrent_backups` at 1 on low-memory hosts. Increase these cautiously while
+watching ESXi load, CPU, memory, and repository I/O. The
 dashboard reports live aggregate throughput in MiB/s. SSH hot backups use a 128 MiB receive
 window and bounded SFTP read-ahead to avoid latency-bound small reads.
 

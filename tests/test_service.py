@@ -175,6 +175,15 @@ def test_duplicate_backup_for_same_vm_is_rejected(tmp_path):
         service.backup("mail")
 
 
+def test_host_wide_backup_concurrency_limit_is_enforced(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    service._begin_backup("existing", "vm-other", "another VM")
+
+    assert "concurrency limit reached (1)" in service.backup_capacity_error("vm-42")
+    with pytest.raises(RuntimeError, match=r"concurrency limit reached \(1\)"):
+        service.backup("mail")
+
+
 def test_restore_maps_esxi_device_keys_to_portable_names(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     disk_chunks, _, _ = service.repository.store_stream(BytesIO(b"disk-data"))

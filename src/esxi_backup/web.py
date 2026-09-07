@@ -502,6 +502,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     def api_home_assistant_backup(vm_id: str, tasks: BackgroundTasks):
         if response := repository_unavailable():
             return response
+        if error := app.state.service.backup_capacity_error(vm_id):
+            return JSONResponse(status_code=409, content={"detail": error})
         tasks.add_task(app.state.service.backup, vm_id)
         return {"accepted": True, "vm_id": vm_id}
 
@@ -589,6 +591,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         compression_level: int = Form(),
         pipeline_workers: int = Form(),
         parallel_disks: int = Form(),
+        max_concurrent_backups: int = Form(),
         quiesce: bool = Form(default=False),
         keep_last: int = Form(),
         keep_daily: int = Form(),
@@ -616,7 +619,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 secondary_repository=secondary_repository.strip() or None,
                 chunk_size_mib=chunk_size_mib,
                 compression_level=compression_level, pipeline_workers=pipeline_workers,
-                parallel_disks=parallel_disks, quiesce=quiesce,
+                parallel_disks=parallel_disks,
+                max_concurrent_backups=max_concurrent_backups, quiesce=quiesce,
                 excluded_vm_ids=current.excluded_vm_ids,
                 retention=RetentionConfig(
                     keep_last=keep_last, keep_daily=keep_daily,
@@ -679,6 +683,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             return response
         if vm_id in app.state.service.config.excluded_vm_ids:
             return JSONResponse(status_code=409, content={"detail": "VM is excluded"})
+        if error := app.state.service.backup_capacity_error(vm_id):
+            return JSONResponse(status_code=409, content={"detail": error})
         tasks.add_task(app.state.service.backup, vm_id)
         return {"accepted": True, "vm_id": vm_id}
 
@@ -688,6 +694,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             return response
         if vm_id in app.state.service.config.excluded_vm_ids:
             return JSONResponse(status_code=409, content={"detail": "VM is excluded"})
+        if error := app.state.service.backup_capacity_error(vm_id):
+            return JSONResponse(status_code=409, content={"detail": error})
         tasks.add_task(app.state.service.backup, vm_id)
         return RedirectResponse("/", status_code=303)
 

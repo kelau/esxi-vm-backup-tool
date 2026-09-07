@@ -35,10 +35,27 @@ class BackupService:
         with self._cancel_lock:
             if vm_id in self._active_vm_ids:
                 raise RuntimeError(f"A backup is already running for {vm_name}.")
+            if len(self._active_vm_ids) >= self.config.max_concurrent_backups:
+                raise RuntimeError(
+                    "Backup concurrency limit reached "
+                    f"({self.config.max_concurrent_backups}). Wait for an active job to finish."
+                )
             event = threading.Event()
             self._active_vm_ids.add(vm_id)
             self._cancel_events[backup_id] = event
             return event
+
+    def backup_capacity_error(self, vm_id: str | None = None) -> str | None:
+        """Return an actionable admission error without allocating a transfer pipeline."""
+        with self._cancel_lock:
+            if vm_id is not None and vm_id in self._active_vm_ids:
+                return "A backup is already running for this VM."
+            if len(self._active_vm_ids) >= self.config.max_concurrent_backups:
+                return (
+                    "Backup concurrency limit reached "
+                    f"({self.config.max_concurrent_backups}). Wait for an active job to finish."
+                )
+        return None
 
     def _end_backup(self, backup_id: str, vm_id: str) -> None:
         with self._cancel_lock:

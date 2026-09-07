@@ -43,6 +43,7 @@ class AppConfig(BaseModel):
     compression_level: Annotated[int, Field(ge=1, le=19)] = 6
     pipeline_workers: Annotated[int, Field(ge=1, le=8)] = 2
     parallel_disks: Annotated[int, Field(ge=1, le=4)] = 2
+    max_concurrent_backups: Annotated[int, Field(ge=1, le=8)] = 1
     quiesce: bool = True
     excluded_vm_ids: list[str] = Field(default_factory=list)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
