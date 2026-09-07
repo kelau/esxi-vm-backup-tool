@@ -232,6 +232,7 @@ class EsxiClient:
                 connection_state=connection_state,
                 guest_os=getattr(config, "guestFullName", None),
                 reference=reference,
+                consolidation_needed=bool(getattr(runtime, "consolidationNeeded", False)),
                 provisioned_bytes=sum(
                     getattr(device, "capacityInBytes", 0) for device in devices
                 ),
@@ -362,6 +363,9 @@ class EsxiClient:
             "id": vm._moId,
             "name": getattr(vm, "name", vm._moId),
             "power_state": str(getattr(getattr(vm, "runtime", None), "powerState", "unknown")),
+            "consolidation_needed": bool(getattr(
+                getattr(vm, "runtime", None), "consolidationNeeded", False
+            )),
             "guest_os": getattr(config, "guestFullName", None),
             "guest_hostname": getattr(guest, "hostName", None),
             "ip_address": getattr(guest, "ipAddress", None),

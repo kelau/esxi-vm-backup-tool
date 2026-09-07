@@ -352,6 +352,18 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             for vm in datastore.get("vms", [])
         }
         notices = {}
+        try:
+            consolidation_count = sum(
+                vm.consolidation_needed for vm in app.state.service.list_vms()
+            )
+        except Exception:
+            consolidation_count = 0
+        if consolidation_count:
+            notices["dashboard"] = {
+                "count": consolidation_count,
+                "message": "VM disks require consolidation",
+                "urgency": "critical",
+            }
         failed = len(unacknowledged_failures(backups))
         if failed:
             notices["tasks"] = {

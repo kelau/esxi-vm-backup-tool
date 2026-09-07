@@ -107,7 +107,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.11.0" in response.text
+    assert "v0.11.1" in response.text
     assert tasks.status_code == 200
     assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
@@ -374,7 +374,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.11.0"
+    assert status["version"] == "0.11.1"
     assert status["requested_at"] is not None
     assert status["stalled"] is False
 
@@ -461,6 +461,29 @@ def test_all_pages_can_be_shown_as_navigation_tabs(tmp_path, monkeypatch):
     assert '<div class="app-tabs">' in page
     assert 'data-tab="datastores"' in page
     assert '<details class="tools-menu' not in page
+
+
+def test_consolidation_needed_is_prominent_and_raises_vm_notification(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    service.list_vms = lambda: [VMInfo(
+        id="vm-7", name="Plex", power_state="poweredOn", consolidation_needed=True
+    )]
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    client = TestClient(create_app())
+
+    dashboard = client.get("/")
+    notices = client.get("/api/v1/notifications").json()
+
+    assert "Needs consolidation" in dashboard.text
+    assert "Backups are blocked until ESXi disk consolidation" in dashboard.text
+    assert notices["dashboard"] == {
+        "count": 1, "message": "VM disks require consolidation", "urgency": "critical",
+    }
 
 
 def test_all_tabs_use_same_stable_page_width(tmp_path, monkeypatch):

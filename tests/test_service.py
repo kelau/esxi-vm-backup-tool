@@ -185,6 +185,20 @@ def test_host_wide_backup_concurrency_limit_is_enforced(tmp_path):
         service.backup("mail")
 
 
+def test_backup_is_blocked_when_esxi_requires_disk_consolidation(tmp_path):
+    class ConsolidationClient(FakeClient):
+        def __init__(self, config):
+            super().__init__(config)
+            self.vm.runtime.consolidationNeeded = True
+
+    service = BackupService(config(tmp_path), client_factory=ConsolidationClient)
+
+    with pytest.raises(RuntimeError, match="needs disk consolidation"):
+        service.backup("vm-42")
+
+    assert service.repository.list()[0].status == "failed"
+
+
 def test_restore_maps_esxi_device_keys_to_portable_names(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     disk_chunks, _, _ = service.repository.store_stream(BytesIO(b"disk-data"))

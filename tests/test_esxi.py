@@ -94,6 +94,19 @@ def test_inventory_tolerates_vm_without_config():
     assert vm.provisioned_bytes == 0
 
 
+def test_vm_inventory_exposes_esxi_consolidation_warning():
+    client = EsxiClient(ServerConfig(host="host", username="user", password="secret"))
+    client._vms = lambda: [SimpleNamespace(
+        _moId="vm-7", name="plex",
+        config=SimpleNamespace(guestFullName="Linux", hardware=SimpleNamespace(device=[])),
+        runtime=SimpleNamespace(
+            powerState="poweredOn", connectionState="connected", consolidationNeeded=True
+        ),
+    )]
+
+    assert client.list_vms()[0].consolidation_needed is True
+
+
 def test_ovf_descriptor_explicitly_excludes_iso_images():
     captured = {}
 

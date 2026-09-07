@@ -222,6 +222,11 @@ class BackupService:
             )
             try:
                 power_state = str(getattr(getattr(vm, "runtime", None), "powerState", ""))
+                if bool(getattr(getattr(vm, "runtime", None), "consolidationNeeded", False)):
+                    raise RuntimeError(
+                        "ESXi reports that this VM needs disk consolidation. Consolidate its "
+                        "disks before starting another backup."
+                    )
                 export_source = vm
                 if power_state != "poweredOff":
                     self.repository.update_progress(

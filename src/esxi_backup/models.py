@@ -68,6 +68,7 @@ class VMInfo(BaseModel):
     guest_os: str | None = None
     reference: str | None = None
     provisioned_bytes: int = 0
+    consolidation_needed: bool = False
 
 
 class BackupRecord(BaseModel):
