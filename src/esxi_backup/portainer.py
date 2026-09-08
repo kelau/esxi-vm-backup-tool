@@ -102,6 +102,16 @@ class PortainerClient:
             params={"all": 1, "size": 1},
         ).json()
         usage = self.volume_usage(endpoint_id)
+        for item in items:
+            if item.get("SizeRw") is None:
+                try:
+                    detail = self._request(
+                        "GET", f"/api/endpoints/{endpoint_id}/docker/containers/{item['Id']}/json",
+                        params={"size": "true"},
+                    ).json()
+                    item["SizeRw"] = detail.get("SizeRw")
+                except httpx.HTTPError:
+                    pass
         return [{
             "id": item["Id"], "name": (item.get("Names") or [item["Id"][:12]])[0].lstrip("/"),
             "image": item.get("Image", ""), "image_id": item.get("ImageID", ""),
