@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from contextlib import contextmanager
 from urllib.parse import quote
 
@@ -28,6 +30,43 @@ class ResponseStream:
 
 
 class PortainerClient:
+    _usage_cache = {}
+    _usage_lock = threading.Lock()
+
+    def volume_usage(self, endpoint_id: int) -> dict:
+        key = (self.config.url, endpoint_id)
+        with self._usage_lock:
+            cached_at, cached = self._usage_cache.get(key, (0, {}))
+            if time.monotonic() - cached_at < 300:
+                return cached
+            try:
+                result = self._request(
+                    "GET", f"/api/endpoints/{endpoint_id}/docker/system/df"
+                ).json()
+                cached = {
+                    volume["Name"]: (volume.get("UsageData") or {}).get("Size")
+                    for volume in result.get("Volumes") or []
+                }
+            except httpx.HTTPError:
+                cached = {}
+            self._usage_cache[key] = (time.monotonic(), cached)
+            return cached
+
+    @staticmethod
+    def persistent_size(mounts, usage):
+        sizes = {}
+        for mount in mounts:
+            if mount.get("Type") == "bind":
+                return None
+            if mount.get("Type") != "volume":
+                continue
+            name = mount.get("Name")
+            size = usage.get(name)
+            if not isinstance(size, int) or size < 0:
+                return None
+            sizes[name] = size
+        return sum(sizes.values())
+
     def __init__(self, config: PortainerConfig):
         self.config = config
         self.client: httpx.Client | None = None
@@ -62,12 +101,13 @@ class PortainerClient:
             "GET", f"/api/endpoints/{endpoint_id}/docker/containers/json",
             params={"all": 1, "size": 1},
         ).json()
+        usage = self.volume_usage(endpoint_id)
         return [{
             "id": item["Id"], "name": (item.get("Names") or [item["Id"][:12]])[0].lstrip("/"),
             "image": item.get("Image", ""), "image_id": item.get("ImageID", ""),
             "state": item.get("State", "unknown"), "status": item.get("Status", ""),
             "container_bytes": item.get("SizeRw"),
-            "persistent_bytes": None,
+            "persistent_bytes": self.persistent_size(item.get("Mounts", []), usage),
         } for item in items]
 
     def inspect_container(self, endpoint_id: int, container_id: str) -> dict:
