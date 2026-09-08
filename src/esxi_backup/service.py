@@ -31,6 +31,17 @@ class BackupService:
         self._cancel_events: dict[str, threading.Event] = {}
         self._active_vm_ids: set[str] = set()
         self._cancel_lock = threading.Lock()
+        self.update_pending = False
+
+    def prepare_update(self) -> bool:
+        """Atomically drain backup admission before the installer restarts us."""
+        with self._cancel_lock:
+            self.update_pending = True
+            return not self._active_vm_ids
+
+    def cancel_update(self) -> None:
+        with self._cancel_lock:
+            self.update_pending = False
 
     def list_containers(self) -> list[dict]:
         if not self.config.portainer:
@@ -121,6 +132,8 @@ class BackupService:
 
     def _begin_backup(self, backup_id: str, vm_id: str, vm_name: str) -> threading.Event:
         with self._cancel_lock:
+            if self.update_pending:
+                raise RuntimeError("An application update is pending. Retry after the update.")
             if vm_id in self._active_vm_ids:
                 raise RuntimeError(f"A backup is already running for {vm_name}.")
             if len(self._active_vm_ids) >= self.config.max_concurrent_backups:
@@ -136,6 +149,8 @@ class BackupService:
     def backup_capacity_error(self, vm_id: str | None = None) -> str | None:
         """Return an actionable admission error without allocating a transfer pipeline."""
         with self._cancel_lock:
+            if self.update_pending:
+                return "An application update is pending. Retry after the update."
             if vm_id is not None and vm_id in self._active_vm_ids:
                 return "A backup is already running for this VM."
             if len(self._active_vm_ids) >= self.config.max_concurrent_backups:
@@ -241,6 +256,8 @@ class BackupService:
                 files = []
                 clone_started = time.monotonic()
                 def report_preparation(done: int, total: int, current: str) -> None:
+                    if cancel_event.is_set():
+                        raise BackupCancelled("Backup cancelled by user")
                     percent = min(24, max(2, int(done * 24 / total))) if total else 2
                     elapsed = max(time.monotonic() - clone_started, 0.001)
                     self.repository.update_progress(
@@ -276,6 +293,8 @@ class BackupService:
 
                     def download(file_index, item):
                         nonlocal total_transferred, last_reported_percent, last_ui_update
+                        if cancel_event.is_set():
+                            raise BackupCancelled("Backup cancelled by user")
                         with client.open_export(item.url) as stream:
                             header_size = int(stream.headers.get("Content-Length", 0)) \
                                 if hasattr(stream, "headers") else 0
@@ -348,6 +367,8 @@ class BackupService:
                             files[index] = file_result
                             logical += file_logical
                             stored += file_stored
+                if cancel_event.is_set():
+                    raise BackupCancelled("Backup cancelled by user")
                 self.repository.update_progress(
                     backup_id, progress=97, phase="writing manifest"
                 )

@@ -514,12 +514,38 @@ class EsxiClient:
         source_match = next((item for item in suitable if item[0] == source), None)
         return source_match[0] if source_match else max(suitable, key=lambda item: item[1])[0]
 
-    def _run_ssh(self, command: str, on_poll=None) -> None:
+    def _run_ssh(self, command: str, on_poll=None, pid_path=None) -> None:
+        if pid_path:
+            command = (
+                command + " & child=$!; echo $child > " + shlex.quote(pid_path)
+                + '; wait "$child"'
+            )
         _stdin, stdout, stderr = self.ssh.exec_command(command, timeout=3600)
         error_output = bytearray()
         while not stdout.channel.exit_status_ready():
             if on_poll:
-                on_poll()
+                try:
+                    on_poll()
+                except Exception:
+                    if pid_path:
+                        # Kill only this job's child, never unrelated vmkfstools processes.
+                        stop = (
+                            "n=0; while [ ! -s " + shlex.quote(pid_path)
+                            + ' ]; do n=$((n+1)); [ "$n" -lt 10 ] || exit 1; sleep 1; done; '
+                            + "p=$(cat " + shlex.quote(pid_path) + "); "
+                            'case "$p" in ""|*[!0-9]*) exit 1;; esac; '
+                            'kill "$p" 2>/dev/null || true'
+                        )
+                        _, stopped, _ = self.ssh.exec_command(stop, timeout=15)
+                        stop_status = stopped.channel.recv_exit_status()
+                        while not stdout.channel.exit_status_ready():
+                            time.sleep(0.1)
+                        if stop_status:
+                            raise RuntimeError(
+                                "Could not interrupt hot clone; waited for safe cleanup"
+                            ) from None
+                    stdout.channel.close()
+                    raise
             while stdout.channel.recv_ready():
                 stdout.channel.recv(65536)
             while stdout.channel.recv_stderr_ready():
@@ -584,6 +610,7 @@ class EsxiClient:
                     "vmkfstools -i " + shlex.quote(source) + " "
                     + shlex.quote(destination) + " -d 2gbsparse",
                     report_clone_progress,
+                    pid_path=f"{directory}/clone.pid",
                 )
                 completed_capacity += int(getattr(disk, "capacityInBytes", 0))
                 clone_paths = sorted(
@@ -604,6 +631,13 @@ class EsxiClient:
                     ))
             yield None, files
         finally:
+            # Includes partial clones when cancellation interrupts vmkfstools.
+            for directory in directories:
+                for item in sftp.listdir_attr(directory):
+                    if item.filename == "clone.pid" or item.filename.startswith("disk-"):
+                        path = f"{directory}/{item.filename}"
+                        if path not in created:
+                            created.append(path)
             for path in reversed(created):
                 try:
                     sftp.remove(path)

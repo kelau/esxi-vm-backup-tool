@@ -163,6 +163,22 @@ def test_backup_can_be_cancelled_and_still_removes_snapshot(tmp_path):
     assert FakeClient.removed
 
 
+def test_cancel_during_hot_clone_stops_before_download(tmp_path):
+    class CloneClient(FakeClient):
+        @contextmanager
+        def export_hot(self, snapshot, backup_id, on_prepare=None):
+            service.cancel_backup(backup_id)
+            on_prepare(0, 1024, "Disk 1")
+            pytest.fail("Cancelled clone must not reach download")
+            yield
+
+    FakeClient.removed = False
+    service = BackupService(config(tmp_path), client_factory=CloneClient)
+    record = service.backup("mail")
+    assert record.status.value == "cancelled"
+    assert FakeClient.removed
+
+
 def test_list_vms(tmp_path):
     service = BackupService(config(tmp_path), client_factory=FakeClient)
     assert service.list_vms()[0].name == "mail"
@@ -183,6 +199,20 @@ def test_host_wide_backup_concurrency_limit_is_enforced(tmp_path):
     assert "concurrency limit reached (1)" in service.backup_capacity_error("vm-42")
     with pytest.raises(RuntimeError, match=r"concurrency limit reached \(1\)"):
         service.backup("mail")
+
+
+def test_update_drains_existing_backup_and_blocks_new_jobs(tmp_path):
+    service = BackupService(config(tmp_path), client_factory=FakeClient)
+    service._begin_backup("existing", "vm-other", "another VM")
+    assert service.prepare_update() is False
+    with pytest.raises(RuntimeError, match="update is pending"):
+        service._begin_backup("new", "vm-new", "new VM")
+    service._end_backup("existing", "vm-other")
+    assert service.prepare_update() is True
+    assert "update is pending" in service.backup_capacity_error()
+    service.cancel_update()
+    service._begin_backup("retry", "vm-new", "new VM")
+    service._end_backup("retry", "vm-new")
 
 
 def test_backup_is_blocked_when_esxi_requires_disk_consolidation(tmp_path):

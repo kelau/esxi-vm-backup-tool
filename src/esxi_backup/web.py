@@ -277,6 +277,20 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             ),
         }
 
+    @app.post("/api/v1/update/cancel")
+    def cancel_update(request: Request):
+        if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+            return JSONResponse(status_code=403, content={"detail": "Local installer only"})
+        app.state.service.cancel_update()
+        return {"cancelled": True}
+
+    @app.post("/api/v1/update/prepare")
+    def prepare_update(request: Request):
+        if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+            return JSONResponse(status_code=403, content={"detail": "Local installer only"})
+        ready = app.state.service.prepare_update()
+        return JSONResponse(status_code=200 if ready else 409, content={"ready": ready})
+
     @app.post("/api/v1/update", status_code=202)
     def api_request_update():
         path = app.state.update_request_path

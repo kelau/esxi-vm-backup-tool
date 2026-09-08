@@ -94,6 +94,23 @@ if [ ! -x "$target/bin/esxi-backup" ]; then
   fi
   rm -f "$source_archive"
 fi
+# Drain active backups before changing the running release. The application closes
+# admission under the same lock used by backup workers, avoiding a check/start race.
+if systemctl is-active --quiet esxi-vm-backup.service; then
+  trap 'curl -sS --max-time 5 -o /dev/null -X POST "http://127.0.0.1:${WEB_PORT}/api/v1/update/cancel" || true' EXIT
+  trap 'exit 1' INT TERM
+  printf 'Waiting for active backups to finish before updating...\n'
+  while :; do
+    update_status="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+      -X POST "http://127.0.0.1:${WEB_PORT}/api/v1/update/prepare")" \
+      || fail "Cannot verify backup activity; update stopped without restarting the service."
+    case "$update_status" in
+      200) break ;;
+      409) sleep 15 ;;
+      *) fail "Cannot safely drain backups (HTTP $update_status). Stop the service after jobs finish, then rerun the installer." ;;
+    esac
+  done
+fi
 ln -sfn "$target" "$INSTALL_ROOT/current.new"
 mv -Tf "$INSTALL_ROOT/current.new" "$INSTALL_ROOT/current"
 
@@ -181,6 +198,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=infinity
 EnvironmentFile=-$UPDATE_ENV
 ExecStart=/usr/local/sbin/esxi-backup-install --update
 StandardOutput=append:$DATA_DIR/update.log
