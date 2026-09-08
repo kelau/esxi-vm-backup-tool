@@ -59,12 +59,15 @@ class PortainerClient:
 
     def containers(self, endpoint_id: int) -> list[dict]:
         items = self._request(
-            "GET", f"/api/endpoints/{endpoint_id}/docker/containers/json", params={"all": 1}
+            "GET", f"/api/endpoints/{endpoint_id}/docker/containers/json",
+            params={"all": 1, "size": 1},
         ).json()
         return [{
             "id": item["Id"], "name": (item.get("Names") or [item["Id"][:12]])[0].lstrip("/"),
             "image": item.get("Image", ""), "image_id": item.get("ImageID", ""),
             "state": item.get("State", "unknown"), "status": item.get("Status", ""),
+            "container_bytes": item.get("SizeRw"),
+            "persistent_bytes": None,
         } for item in items]
 
     def inspect_container(self, endpoint_id: int, container_id: str) -> dict:
