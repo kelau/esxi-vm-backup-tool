@@ -93,12 +93,39 @@ class BackupService:
                     self.repository.update_progress(
                         backup_id,
                         progress=10 + int(80 * (index - 1) / max(1, len(mounts))),
-                        phase="archiving container storage", current_file=str(label),
+                        phase="archiving container storage (size unavailable)",
+                        current_file=str(label),
                     )
+                    transferred = 0
+                    transfer_started = time.monotonic()
+                    last_report = 0.0
+
+                    def report_transfer(
+                        count: int, force: bool = False, logical=logical,
+                        index=index, label=label, transfer_started=transfer_started,
+                    ) -> None:
+                        nonlocal transferred, last_report
+                        if cancel_event.is_set():
+                            raise BackupCancelled("Backup cancelled by user")
+                        transferred += count
+                        now = time.monotonic()
+                        if force or now - last_report >= 1:
+                            self.repository.update_progress(
+                                backup_id, logical_bytes=logical + transferred,
+                                progress=10 + int(80 * (index - 1) / max(1, len(mounts))),
+                                phase="archiving container storage (size unavailable)",
+                                current_file=str(label),
+                                throughput_mib_s=transferred / 1048576
+                                / max(now - transfer_started, 0.001),
+                            )
+                            last_report = now
+
                     with client.archive(endpoint_id, container_id, mount["Destination"]) as stream:
                         chunks, file_logical, file_stored = self.repository.store_stream(
-                            stream, workers=self.config.pipeline_workers
+                            stream, workers=self.config.pipeline_workers,
+                            on_read=report_transfer,
                         )
+                    report_transfer(0, force=True)
                     logical += file_logical
                     stored += file_stored
                     files.append({

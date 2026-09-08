@@ -134,6 +134,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         latest_job = {}
         latest = {}
         for backup in backups:
+            if backup.vm_id.startswith("container:"):
+                continue
             latest_job.setdefault(backup.vm_id, backup)
             if backup.status in {"running", "success"}:
                 latest.setdefault(backup.vm_id, backup)
@@ -228,10 +230,20 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         for item in app.state.service.repository.list():
             if item.vm_id.startswith("container:"):
                 latest.setdefault(item.vm_id, item)
+        live_ids = {f"container:{item['endpoint_id']}:{item['id']}" for item in containers}
+        for identity, backup in latest.items():
+            if identity not in live_ids:
+                _, endpoint_id, container_id = identity.split(":", 2)
+                containers.append({
+                    "id": container_id, "endpoint_id": endpoint_id,
+                    "endpoint_name": f"Endpoint {endpoint_id}", "name": backup.vm_name,
+                    "image": "—", "state": "backup only", "status": "Not in live inventory",
+                })
         return templates.TemplateResponse(request, "containers.html", {
             "containers": containers, "error": error,
             "configured": app.state.service.config.portainer is not None,
             "latest": latest,
+            "repository_stats": app.state.service.repository.stats(),
         })
 
     @app.post("/containers/{endpoint_id}/{container_id}/backups")
@@ -522,6 +534,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
         vm_map = {vm.id: vm for vm in live_vms}
         for vm_id, backup in latest_job.items():
+            if vm_id.startswith("container:"):
+                continue
             if vm_id not in vm_map:
                 vm_map[vm_id] = VMInfo(
                     id=vm_id, name=backup.vm_name, power_state="unavailable",
