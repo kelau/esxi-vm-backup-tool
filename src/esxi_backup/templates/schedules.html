@@ -11,20 +11,19 @@ body{font:15px system-ui;margin:0;background:var(--bg);color:#eef3ff}main{box-si
 <input type="hidden" name="schedule_id" value="{{ schedule.id }}"><div class="grid">
 <label>Name<input name="name" value="{{ schedule.name }}" required></label>
 <label>Frequency<select name="frequency"><option value="disabled" {% if schedule.frequency=='disabled' %}selected{% endif %}>Disabled</option><option value="daily" {% if schedule.frequency=='daily' %}selected{% endif %}>Daily</option><option value="weekly" {% if schedule.frequency=='weekly' %}selected{% endif %}>Weekly</option></select></label>
-<label>Time<input name="hour" type="number" min="0" max="23" value="{{ schedule.hour }}" required><input name="minute" type="number" min="0" max="59" value="{{ schedule.minute }}" required></label>
+<label>Time<input name="schedule_time" type="time" step="60" value="{{ '%02d:%02d'|format(schedule.hour, schedule.minute) }}" required></label>
 <label>Weekday<select name="weekday">{% for day in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}<option value="{{ loop.index0 }}" {% if schedule.weekday==loop.index0 %}selected{% endif %}>{{ day }}</option>{% endfor %}</select></label></div>
 <div class="checks"><label><input type="checkbox" name="quiesce" value="true" {% if schedule.quiesce %}checked{% endif %}> Quiesced snapshot</label><label><input type="checkbox" name="build_ova" value="true" {% if schedule.build_ova %}checked{% endif %}> Build OVA after backup</label></div>
 <strong>Virtual machines</strong><div class="vms">{% for vm in vms %}<label{% if vm.id in config.excluded_vm_ids %} style="opacity:.45" title="Excluded from backups"{% endif %}><input type="checkbox" name="vm_ids" value="{{ vm.id }}" {% if vm.id in schedule.vm_ids %}checked{% endif %}> {{ vm.name }}{% if vm.id in config.excluded_vm_ids %} · Excluded{% endif %}</label>{% endfor %}</div>
 <button type="submit">Save schedule</button> {% if schedule.next_run_at %}<small class="muted">Next: {{ schedule.next_run_at }}</small>{% endif %}
 <button class="delete" type="submit" formaction="/schedules/{{ schedule.id }}/delete" onclick="return confirm('Delete this schedule?')">Delete</button></form>{% endfor %}
 <h2>New schedule</h2><form class="card" method="post" action="/schedules"><div class="grid">
-<label>Name<input name="name" placeholder="Nightly backups" required></label><label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="disabled">Disabled</option></select></label><label>Time<input name="hour" type="number" min="0" max="23" value="2"><input name="minute" type="number" min="0" max="59" value="0"></label><label>Weekday<select name="weekday">{% for day in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}<option value="{{ loop.index0 }}">{{ day }}</option>{% endfor %}</select></label></div>
+<label>Name<input name="name" placeholder="Nightly backups" required></label><label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="disabled">Disabled</option></select></label><label>Time<input name="schedule_time" type="time" step="60" value="02:00" required></label><label>Weekday<select name="weekday">{% for day in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}<option value="{{ loop.index0 }}">{{ day }}</option>{% endfor %}</select></label></div>
 <div class="checks"><label><input type="checkbox" name="quiesce" value="true" checked> Quiesced snapshot</label><label><input type="checkbox" name="build_ova" value="true"> Build OVA after backup</label></div><strong>Virtual machines</strong><div class="vms">{% for vm in vms %}<label{% if vm.id in config.excluded_vm_ids %} style="opacity:.45" title="Excluded from backups"{% endif %}><input type="checkbox" name="vm_ids" value="{{ vm.id }}"> {{ vm.name }}{% if vm.id in config.excluded_vm_ids %} · Excluded{% endif %}</label>{% endfor %}</div><button type="submit">Create schedule</button></form>
 <script>
 document.querySelectorAll('form[action="/schedules"]').forEach(form => {
   const frequency = form.elements.frequency;
-  const hour = form.elements.hour;
-  const minute = form.elements.minute;
+  const timePicker = form.elements.schedule_time;
   const weekday = form.elements.weekday;
   const summary = document.createElement('p');
   summary.className = 'muted schedule-summary';
@@ -33,14 +32,15 @@ document.querySelectorAll('form[action="/schedules"]').forEach(form => {
   function updateScheduleFields() {
     const enabled = frequency.value !== 'disabled';
     const weekly = frequency.value === 'weekly';
-    hour.closest('label').style.display = enabled ? '' : 'none';
+    timePicker.closest('label').style.display = enabled ? '' : 'none';
     weekday.closest('label').style.display = weekly ? '' : 'none';
     // Preserve the saved values when switching frequency; hidden controls still submit.
-    const time = `${String(hour.value).padStart(2, '0')}:${String(minute.value).padStart(2, '0')}`;
+    timePicker.required = enabled;
+    const time = timePicker.value || '—';
     summary.textContent = !enabled ? 'Disabled — no automatic backups' :
       `${weekly ? 'Every ' + weekday.selectedOptions[0].text : 'Every day'} at ${time} (service host time)`;
   }
-  [frequency, hour, minute, weekday].forEach(field => {
+  [frequency, timePicker, weekday].forEach(field => {
     field.addEventListener('input', updateScheduleFields);
     field.addEventListener('change', updateScheduleFields);
   });

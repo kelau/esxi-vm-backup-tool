@@ -75,6 +75,36 @@ class FakeClient:
         }
 
 
+def test_schedules_survive_inventory_failure(tmp_path, monkeypatch):
+    config = AppConfig(
+        server=ServerConfig(host="esxi.test", username="user", password="secret"),
+        repository=str(tmp_path),
+    )
+    service = BackupService(config, client_factory=FakeClient)
+    service.repository.save_schedule_policy(SchedulePolicy(
+        id="weekly", name="Weekly backups", vm_ids=["vm-1"], frequency="weekly",
+    ))
+    monkeypatch.setattr("esxi_backup.web.BackupService", lambda _config: service)
+    monkeypatch.setattr("esxi_backup.web.load_config", lambda _path: config)
+    def unavailable():
+        raise OSError("Temporary failure in name resolution")
+    monkeypatch.setattr(service, "list_vms", unavailable)
+    client = TestClient(create_app())
+    response = client.get("/schedules")
+    assert response.status_code == 200
+    assert "Weekly backups" in response.text
+    assert "ESXi VM list unavailable" in response.text
+    assert 'value="vm-1" checked' in response.text
+    response = client.post("/schedules", data={
+        "schedule_id": "weekly", "name": "Weekly backups", "frequency": "disabled",
+        "vm_ids": "vm-1", "schedule_time": "03:45",
+    })
+    assert response.status_code == 200
+    saved = service.repository.list_schedule_policies()[0]
+    assert saved.vm_ids == ["vm-1"]
+    assert (saved.hour, saved.minute) == (3, 45)
+
+
 def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     config = AppConfig(
         server=ServerConfig(host="esxi.test", username="user", password="secret"),
@@ -107,7 +137,7 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
     tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.11.3" in response.text
+    assert "v0.11.4" in response.text
     assert tasks.status_code == 200
     assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
@@ -374,7 +404,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.11.3"
+    assert status["version"] == "0.11.4"
     assert status["requested_at"] is not None
     assert status["stalled"] is False
 

@@ -596,14 +596,26 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/schedules", response_class=HTMLResponse)
     def schedules_page(request: Request):
+        schedules, vms, error = [], [], None
+        try:
+            if repository_error := app.state.service.repository.availability_error():
+                error = repository_error
+            else:
+                schedules = app.state.scheduler.policies()
+        except Exception as exc:
+            error = str(exc)
         try:
             vms = app.state.service.list_vms()
-            if repository_error := app.state.service.repository.availability_error():
-                schedules, error = [], repository_error
-            else:
-                schedules, error = app.state.scheduler.policies(), None
         except Exception as exc:
-            vms, schedules, error = [], [], str(exc)
+            warning = f"ESXi VM list unavailable: {exc}. Saved schedules are still available."
+            error = f"{error} · {warning}" if error else warning
+        # Keep saved members selectable even when inventory is unavailable or incomplete.
+        known_ids = {vm.id for vm in vms}
+        for schedule in schedules:
+            for vm_id in schedule.vm_ids:
+                if vm_id not in known_ids:
+                    vms.append({"id": vm_id, "name": f"VM {vm_id} (inventory unavailable)"})
+                    known_ids.add(vm_id)
         return templates.TemplateResponse(request, "schedules.html", {
             "schedules": schedules, "vms": vms, "error": error,
             "config": app.state.service.config,
@@ -614,11 +626,17 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         name: str = Form(), vm_ids: list[str] | None = optional_vm_ids,
         schedule_id: str = Form(default=""), frequency: str = Form(default="daily"),
         hour: int = Form(default=2), minute: int = Form(default=0),
+        schedule_time: str = Form(default=""),
         weekday: int = Form(default=0), quiesce: bool = Form(default=False),
         build_ova: bool = Form(default=False),
     ):
         if response := repository_unavailable():
             return response
+        if schedule_time:
+            import re
+            if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", schedule_time):
+                return JSONResponse(status_code=422, content={"detail": "Invalid schedule time"})
+            hour, minute = map(int, schedule_time.split(":"))
         schedule = SchedulePolicy(
             id=schedule_id or uuid.uuid4().hex, name=name.strip(), vm_ids=vm_ids or [],
             frequency=frequency, hour=hour, minute=minute, weekday=weekday,
