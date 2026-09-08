@@ -320,9 +320,17 @@ def test_container_backup_captures_metadata_and_named_volumes(tmp_path, monkeypa
                 "State": {"Running": True},
                 "Mounts": [
                     {"Type": "volume", "Name": "db-data", "Destination": "/data"},
+                    {"Type": "volume", "Name": "movies", "Destination": "/movies"},
                     {"Type": "bind", "Source": "/host/secrets", "Destination": "/secrets"},
                 ],
             }
+
+        def inspect_volume(self, _endpoint, name):
+            return {"Options": {"type": "nfs"} if name == "movies" else {}}
+
+        def is_network_volume(self, volume):
+            from esxi_backup.portainer import PortainerClient
+            return PortainerClient.is_network_volume(volume)
 
         def pause(self, *_):
             events.append("pause")
@@ -350,4 +358,5 @@ def test_container_backup_captures_metadata_and_named_volumes(tmp_path, monkeypa
     assert backup.status == "success"
     assert events == ["pause", "/data", "unpause"]
     assert manifest["kind"] == "docker-container"
+    assert manifest["skipped_mounts"][0]["mount"]["Destination"] == "/movies"
     assert [item["name"] for item in manifest["files"]] == ["db-data.tar"]

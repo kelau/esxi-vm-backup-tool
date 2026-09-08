@@ -115,6 +115,17 @@ class PortainerClient:
             "GET", f"/api/endpoints/{endpoint_id}/docker/containers/{container_id}/json"
         ).json()
 
+    def inspect_volume(self, endpoint_id: int, name: str) -> dict:
+        return self._request(
+            "GET", f"/api/endpoints/{endpoint_id}/docker/volumes/{quote(name, safe='')}"
+        ).json()
+
+    @staticmethod
+    def is_network_volume(volume: dict) -> bool:
+        options = volume.get("Options") or {}
+        filesystem = str(options.get("type", "")).lower()
+        return filesystem in {"nfs", "nfs4", "cifs", "smb", "smb3"}
+
     def pause(self, endpoint_id: int, container_id: str) -> None:
         path = f"/api/endpoints/{endpoint_id}/docker/containers/{container_id}/pause"
         self._request("POST", path)

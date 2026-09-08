@@ -86,6 +86,16 @@ class BackupService:
                         and self.config.portainer.include_bind_mounts
                     )
                 ]
+                local_mounts = []
+                skipped_mounts = []
+                for mount in mounts:
+                    if mount.get("Type") == "volume":
+                        volume = client.inspect_volume(endpoint_id, mount["Name"])
+                        if client.is_network_volume(volume):
+                            skipped_mounts.append({"mount": mount, "reason": "network volume"})
+                            continue
+                    local_mounts.append(mount)
+                mounts = local_mounts
                 for index, mount in enumerate(mounts, start=1):
                     if cancel_event.is_set():
                         raise BackupCancelled("Backup cancelled by user")
@@ -135,7 +145,7 @@ class BackupService:
                 self.repository.write_manifest(backup_id, {
                     "format": 1, "kind": "docker-container", "backup_id": backup_id,
                     "vm_id": identity, "vm_name": name, "endpoint_id": endpoint_id,
-                    "container": details, "files": files,
+                    "container": details, "files": files, "skipped_mounts": skipped_mounts,
                 })
                 referenced = {
                     chunk["sha256"]: int(chunk["stored_size"])
