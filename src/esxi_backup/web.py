@@ -18,6 +18,7 @@ from .config import load_config, resolve_config_path, save_config
 from .models import (
     AppConfig,
     BackupSchedule,
+    BackupStatus,
     PortainerConfig,
     RetentionConfig,
     SchedulePolicy,
@@ -342,6 +343,15 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         payload["enabled"] = app.state.update_request_path.parent.is_dir()
         payload["checked_at"] = app.state.release_cache["checked_at"]
         return payload
+
+    @app.get("/api/v1/backup-activity")
+    def backup_activity():
+        counts = {"dashboard": 0, "containers": 0}
+        for backup in app.state.service.repository.list():
+            if backup.status == BackupStatus.RUNNING:
+                page = "containers" if backup.vm_id.startswith("container:") else "dashboard"
+                counts[page] += 1
+        return counts
 
     @app.get("/api/v1/notifications")
     def api_notifications():

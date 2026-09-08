@@ -134,10 +134,18 @@ def test_dashboard_renders_from_worker_thread(tmp_path, monkeypatch):
 
     client = TestClient(create_app())
     response = client.get("/")
+    assert client.get("/api/v1/backup-activity").json() == {"dashboard": 1, "containers": 0}
+    service.repository.create(BackupRecord(
+        id="container-active", vm_id="container:1:abc", vm_name="container",
+        status=BackupStatus.RUNNING,
+    ))
+    assert client.get("/api/v1/backup-activity").json()["containers"] == 1
+    service.repository.cancel("container-active")
+    assert client.get("/api/v1/backup-activity").json()["containers"] == 0
     tasks = client.get("/tasks")
 
     assert response.status_code == 200
-    assert "v0.11.4" in response.text
+    assert "v0.11.5" in response.text
     assert tasks.status_code == 200
     assert 'href="/tasks"' in response.text
     assert 'href="/datastores"' in response.text
@@ -404,7 +412,7 @@ def test_web_ui_can_request_systemd_update(tmp_path, monkeypatch):
     assert response.json()["accepted"] is True
     assert request_path.read_text(encoding="utf-8")
     assert status["enabled"] is True
-    assert status["version"] == "0.11.4"
+    assert status["version"] == "0.11.5"
     assert status["requested_at"] is not None
     assert status["stalled"] is False
 

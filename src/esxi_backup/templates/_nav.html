@@ -6,6 +6,23 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
 {% macro tab(page, href, label) -%}<a class="app-tab{% if active_page==page %} active{% endif %}" href="{{ href }}" data-tab="{{ page }}">{{ label }}<span class="tab-badge"></span></a>{%- endmacro %}
 <header class="app-shell"><div class="app-shell-row"><div class="app-title">ESXi VM Backup <small>v{{ app_version }}</small></div><nav class="app-nav" aria-label="Application"><div class="app-tabs">{{ tab('dashboard','/','VMs') }}{{ tab('containers','/containers','Containers') }}{{ tab('tasks','/tasks','Tasks') }}{% if show_all_navigation_tabs() %}{{ tab('datastores','/datastores','Datastores') }}{{ tab('schedules','/schedules','Schedules') }}{{ tab('settings','/settings','Settings') }}{{ tab('updates','/updates','Updates') }}{% endif %}</div>{% if not show_all_navigation_tabs() %}<details class="tools-menu{% if active_page in ['datastores','schedules','settings','updates'] %} active{% endif %}"><summary aria-label="Tools" title="Tools">&#128736;</summary><div class="tools-popup">{{ tab('datastores','/datastores','Datastores') }}{{ tab('schedules','/schedules','Schedules') }}{{ tab('settings','/settings','Settings') }}{{ tab('updates','/updates','Updates') }}</div></details>{% endif %}</nav></div></header>
 <script>
+async function refreshBackupActivity(){
+  try{
+    const response=await fetch('/api/v1/backup-activity',{cache:'no-store'});
+    if(!response.ok)return;
+    const counts=await response.json();
+    for(const [page,count] of Object.entries(counts)){
+      const tab=document.querySelector('[data-tab="'+page+'"]');
+      if(!tab)continue;
+      let pill=tab.querySelector('.backup-activity');
+      if(!pill){pill=document.createElement('span');pill.className='backup-activity tab-badge urgency-info';pill.setAttribute('aria-live','polite');tab.append(pill)}
+      pill.textContent=count+' backing up';
+      pill.title=count+' active backup job'+(count===1?'':'s');
+      pill.classList.toggle('visible',count>0);
+    }
+  }catch(_){}finally{setTimeout(refreshBackupActivity,5000)}
+}
+refreshBackupActivity();
 function paintTabNotice(tab,item){const badge=document.querySelector('[data-tab="'+tab+'"] .tab-badge');if(badge&&item.count){badge.textContent=item.count;badge.title=item.message;badge.className='tab-badge visible urgency-'+(item.urgency||'info')}}
 function detectApplicationUpdate(){fetch('/api/v1/update/check',{cache:'no-store'}).then(r=>r.json()).then(item=>{if(item.available)paintTabNotice('updates',{count:1,message:'Version '+item.latest_version+' is available',urgency:'info'})}).catch(()=>{})}
 fetch('/api/v1/notifications',{cache:'no-store'}).then(r=>r.json()).then(items=>Object.entries(items).forEach(([tab,item])=>paintTabNotice(tab,item))).catch(()=>{});detectApplicationUpdate();setInterval(detectApplicationUpdate,900000);
