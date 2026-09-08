@@ -228,7 +228,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             containers, error = [], str(exc)
         latest = {}
         for item in app.state.service.repository.list():
-            if item.vm_id.startswith("container:"):
+            if item.vm_id.startswith("container:") and item.status in {"running", "success"}:
                 latest.setdefault(item.vm_id, item)
         live_ids = {f"container:{item['endpoint_id']}:{item['id']}" for item in containers}
         for identity, backup in latest.items():
